@@ -49,7 +49,10 @@ export const config = {
     /*
      * Run on everything except static assets, so `next/image` and CSS keep
      * loading while auth redirects stay in place.
+     *
+     * API routes are excluded on purpose: they must answer with their own
+     * status codes (401/429) instead of an HTML redirect to /login.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };
