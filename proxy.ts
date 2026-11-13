@@ -51,8 +51,9 @@ export const config = {
      * loading while auth redirects stay in place.
      *
      * API routes are excluded on purpose: they must answer with their own
-     * status codes (401/429) instead of an HTML redirect to /login.
+     * status codes (401/429) instead of an HTML redirect to /login. The PWA
+     * manifest is excluded so installs work from the signed-out login page.
      */
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

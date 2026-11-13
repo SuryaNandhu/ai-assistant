@@ -19,7 +19,7 @@ export function AppHeader({ email }: AppHeaderProps) {
         <form action="/auth/signout" method="post">
           <button
             type="submit"
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             Sign out
           </button>
