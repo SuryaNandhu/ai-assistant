@@ -58,6 +58,44 @@ export async function loadActiveGoals(
   return ((data ?? []) as GoalOption[]).filter((row) => Boolean(row.goal));
 }
 
+/**
+ * Tags already in use for this user, most used first (max 50). Fed to the
+ * classifier so it reuses an existing topic instead of inventing a near
+ * duplicate ("react" vs "reactjs").
+ */
+export async function loadTopTags(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("items")
+    .select("tags")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    // Tags are a nicety; the save and the title still work without them.
+    console.error("Could not load existing tags:", error.message);
+    return [];
+  }
+
+  const counts = new Map<string, number>();
+
+  for (const row of (data ?? []) as { tags: string[] | null }[]) {
+    for (const tag of row.tags ?? []) {
+      const clean = typeof tag === "string" ? tag.trim().toLowerCase() : "";
+      if (!clean) continue;
+      counts.set(clean, (counts.get(clean) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 50)
+    .map(([tag]) => tag);
+}
+
 export async function saveInboxItem(
   supabase: SupabaseClient,
   userId: string,
@@ -161,14 +199,18 @@ export async function enrichInboxItem(args: {
       }
     }
 
-    const goals = await loadActiveGoals(args.supabase, args.userId)
-      .then((rows) => rows.map((row) => row.goal))
-      .catch(() => [] as string[]);
+    const [goals, existingTags] = await Promise.all([
+      loadActiveGoals(args.supabase, args.userId)
+        .then((rows) => rows.map((row) => row.goal))
+        .catch(() => [] as string[]),
+      loadTopTags(args.supabase, args.userId),
+    ]);
 
     const ai = await classifyLink({
       title: title ?? titleFromUrl(parsedUrl),
       description: description ?? (channel ? `YouTube channel: ${channel}` : null),
       goals,
+      existingTags,
       url: args.url,
     });
 
@@ -185,6 +227,8 @@ export async function enrichInboxItem(args: {
       if (!args.chosenGoal) update.goal = ai.goal ?? rules.goal;
       update.est_minutes = ai.est_minutes;
       update.energy = ai.energy;
+      // No AI answer (or no tags in it) means the column keeps its '{}'.
+      if (ai.tags.length > 0) update.tags = ai.tags;
     }
 
     if (Object.keys(update).length === 0) return;

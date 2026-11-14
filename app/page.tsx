@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { HomeBoard } from "@/components/home-board";
 import { HomeHeader } from "@/components/home-header";
+import { QuickSaveButton } from "@/components/quick-save";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
@@ -52,6 +53,7 @@ export default async function HomePage() {
         <HomeHeader progress={progress} streak={streak} error={statsError} />
         <HomeBoard />
       </div>
+      <QuickSaveButton />
       <BottomNav />
     </main>
   );

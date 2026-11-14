@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { revisitDueAt } from "@/lib/inbox";
 import {
   findGoalProgress,
   loadWeeklyProgress,
@@ -31,6 +32,8 @@ type ItemRow = {
   energy: string | null;
   last_skipped_at: string | null;
   takeaway: string | null;
+  /** Set while the item is parked for later; null means it is fair game. */
+  revisit_at: string | null;
 };
 
 export type PickRequest = {
@@ -68,8 +71,9 @@ function skippedRecently(item: ItemRow, now: Date): boolean {
   return now.getTime() - skippedAt < SKIP_COOLDOWN_MS;
 }
 
-/** Time, energy and the 24 hour skip cooldown — the rules for real items. */
+/** Time, energy, the 24 hour skip cooldown and any active revisit date. */
 function isEligible(item: ItemRow, request: PickRequest, now: Date): boolean {
+  if (!revisitDueAt(item.revisit_at, now)) return false;
   if (itemMinutes(item) > request.minutes) return false;
   if (energyRank(itemEnergy(item)) > energyRank(request.energy)) return false;
   return !skippedRecently(item, now);
@@ -132,7 +136,7 @@ async function loadTodoItems(
   const { data, error } = await supabase
     .from("items")
     .select(
-      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway",
+      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway, revisit_at",
     )
     .eq("user_id", userId)
     .eq("status", "todo")
