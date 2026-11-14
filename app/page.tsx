@@ -4,10 +4,16 @@ import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { HomeBoard } from "@/components/home-board";
 import { HomeHeader } from "@/components/home-header";
+import { JournalCard } from "@/components/journal-card";
 import { QuickSaveButton } from "@/components/quick-save";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
+import {
+  isJournalPromptTime,
+  loadJournalEntry,
+  type JournalEntry,
+} from "@/lib/journal";
 import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
 import {
   QUICK_LOG_MAX_DAYS_BACK,
@@ -38,7 +44,8 @@ export default async function HomePage() {
   const supabase = await createClient();
 
   // The IST day keys are fixed on the server so the client never disagrees.
-  const todayKey = istDayKey(new Date());
+  const now = new Date();
+  const todayKey = istDayKey(now);
   const minDayKey = shiftDayKey(todayKey, -QUICK_LOG_MAX_DAYS_BACK);
 
   let progress: WeeklyProgress | null = null;
@@ -55,6 +62,14 @@ export default async function HomePage() {
     statsError = errorMessage(error);
   }
 
+  // A missing journal table should only hide the card, never break Home.
+  let journalEntry: JournalEntry | null = null;
+  try {
+    journalEntry = await loadJournalEntry(supabase, user.id, todayKey);
+  } catch (error) {
+    console.error("Could not load today's journal entry:", error);
+  }
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -64,6 +79,10 @@ export default async function HomePage() {
           targets={quickLogTargets(progress?.goals ?? [])}
           todayKey={todayKey}
           minDayKey={minDayKey}
+        />
+        <JournalCard
+          entry={journalEntry}
+          showPrompt={isJournalPromptTime(now)}
         />
       </div>
       <QuickSaveButton />

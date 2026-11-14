@@ -23,6 +23,8 @@ const MONTHS = [
   "Dec",
 ];
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 export type IstParts = {
   year: number;
   /** 0-based, like `Date.getUTCMonth()`. */
@@ -30,6 +32,9 @@ export type IstParts = {
   day: number;
   /** 0 = Sunday … 6 = Saturday. */
   weekday: number;
+  /** 0-23 in IST — used by the evening journal prompt. */
+  hour: number;
+  minute: number;
 };
 
 /** Calendar pieces of an instant as seen in IST. */
@@ -40,6 +45,8 @@ export function istParts(date: Date): IstParts {
     month: shifted.getUTCMonth(),
     day: shifted.getUTCDate(),
     weekday: shifted.getUTCDay(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
   };
 }
 
@@ -68,6 +75,15 @@ export function shiftDayKey(dayKey: string, days: number): string {
 /** `YYYY-MM-DD` for an instant, asserted as an IST day key. */
 export function isDayKey(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/** `Sat, 14 Nov` for a day key — the journal list heading. */
+export function dayKeyLabel(dayKey: string): string {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  if (!year || !month || !day) return dayKey;
+
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return `${WEEKDAYS[weekday]}, ${day} ${MONTHS[month - 1]}`;
 }
 
 /** Monday 00:00 IST of the week containing `date`. */
