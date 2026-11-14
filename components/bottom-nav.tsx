@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/", label: "Home", icon: HomeIcon },
   { href: "/saved", label: "Saved", icon: SavedIcon },
+  { href: "/progress", label: "Progress", icon: ProgressIcon },
   { href: "/chat", label: "Chat", icon: ChatIcon },
 ] as const;
 
@@ -79,6 +80,26 @@ function SavedIcon() {
     >
       <path d="M3.5 13.5 5.2 5.9A2 2 0 0 1 7.1 4.4h9.8a2 2 0 0 1 1.9 1.5l1.7 7.6" />
       <path d="M3.5 13.5h4.3l1.2 2.4h6l1.2-2.4h4.3v4.1a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-4.1Z" />
+    </svg>
+  );
+}
+
+function ProgressIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-6 w-6"
+    >
+      <path d="M4 20h16" />
+      <path d="M7.5 20v-5" />
+      <path d="M12 20V8" />
+      <path d="M16.5 20v-8" />
     </svg>
   );
 }

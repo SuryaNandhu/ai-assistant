@@ -10,6 +10,8 @@ const LOOKBACK_DAYS = 400;
 export type Streak = {
   /** Consecutive days with at least one completion, counting back from today. */
   days: number;
+  /** Longest run of consecutive active days inside the lookback window. */
+  longest: number;
   completedToday: boolean;
 };
 
@@ -34,7 +36,29 @@ export function computeStreak(
     cursor = shiftDayKey(cursor, -1);
   }
 
-  return { days: length, completedToday };
+  return { days: length, longest: longestStreak(days), completedToday };
+}
+
+/**
+ * Longest run of consecutive active days.
+ *
+ * Day keys sort correctly as strings, and `shiftDayKey` keeps the comparison in
+ * plain calendar days, so this needs no timezone math of its own.
+ */
+export function longestStreak(dayKeys: Iterable<string>): number {
+  const keys = [...new Set(dayKeys)].filter(isDayKey).sort();
+
+  let longest = 0;
+  let run = 0;
+  let previous: string | null = null;
+
+  for (const key of keys) {
+    run = previous !== null && shiftDayKey(previous, 1) === key ? run + 1 : 1;
+    if (run > longest) longest = run;
+    previous = key;
+  }
+
+  return longest;
 }
 
 /**
