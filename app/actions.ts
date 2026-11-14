@@ -5,6 +5,12 @@ import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
 import { pickTask, type PickRequest } from "@/lib/picker";
+import {
+  SKIP_REASON_VALUES,
+  toSuggestionFelt,
+  type SkipReason,
+  type SuggestionFelt,
+} from "@/lib/suggestions";
 import { createClient } from "@/lib/supabase/server";
 import {
   DEFAULT_DISTANCE_KM,
@@ -42,9 +48,15 @@ const taskRefSchema = z.object({
   itemId: z.uuid().nullable().default(null),
   goal: z.string().max(60).nullable().default(null),
   key: z.string().min(1).max(120),
+  /** `suggestions` row logged when the task was picked. */
+  suggestionId: z.uuid().nullable().default(null),
 });
 
-const skipSchema = z.object({ pick: pickSchema, task: taskRefSchema });
+const skipSchema = z.object({
+  pick: pickSchema,
+  task: taskRefSchema,
+  reason: z.enum(SKIP_REASON_VALUES),
+});
 
 const completeSchema = z.object({
   task: z.object({
@@ -56,8 +68,11 @@ const completeSchema = z.object({
     distanceKm: z.number().min(0).max(100).nullable().default(null),
     /** One-line takeaway for a link; ignored for generic suggestions. */
     takeaway: z.string().trim().max(280).nullable().default(null),
+    suggestionId: z.uuid().nullable().default(null),
   }),
   felt: feltSchema,
+  /** "More like this?" — null means the user did not answer. */
+  liked: z.boolean().nullable().default(null),
 });
 
 const SIGNED_OUT =
@@ -122,10 +137,15 @@ export async function skipTaskAction(input: unknown): Promise<PickResult> {
   const session = await requireSession();
   if (!session) return { ok: false, message: SIGNED_OUT };
 
-  const { pick, task } = parsed.data;
+  const { pick, task, reason } = parsed.data;
   if (task.source === "item" && task.itemId) {
     await recordSkip(session, task.itemId);
   }
+
+  await finishSuggestion(session, task.suggestionId, {
+    outcome: "skipped",
+    skipReason: reason,
+  });
 
   try {
     const next = await pickTask(session, {
@@ -171,6 +191,47 @@ async function recordSkip(session: Session, itemId: string): Promise<void> {
   }
 }
 
+type SuggestionPatch = {
+  outcome: "done" | "skipped";
+  felt?: SuggestionFelt;
+  liked?: boolean | null;
+  actualMinutes?: number;
+  skipReason?: SkipReason;
+};
+
+/**
+ * Closes out the suggestion behind a task. Losing this write only costs a bit
+ * of learning, so it is logged rather than shown as an error.
+ */
+async function finishSuggestion(
+  session: Session,
+  suggestionId: string | null,
+  patch: SuggestionPatch,
+): Promise<void> {
+  if (!suggestionId) return;
+
+  const update: Record<string, unknown> = { outcome: patch.outcome };
+  if (patch.felt) update.felt = patch.felt;
+  if (patch.liked !== undefined) update.liked = patch.liked;
+  if (
+    typeof patch.actualMinutes === "number" &&
+    patch.actualMinutes > 0
+  ) {
+    update.actual_minutes = patch.actualMinutes;
+  }
+  if (patch.skipReason) update.skip_reason = patch.skipReason;
+
+  const { error } = await session.supabase
+    .from("suggestions")
+    .update(update)
+    .eq("id", suggestionId)
+    .eq("user_id", session.userId);
+
+  if (error) {
+    console.error("Could not update the suggestion:", error.message);
+  }
+}
+
 function distanceFor(value: number | null | undefined): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.min(100, value);
@@ -203,7 +264,7 @@ export async function completeTaskAction(
   const session = await requireSession();
   if (!session) return { ok: false, message: SIGNED_OUT };
 
-  const { task, felt } = parsed.data;
+  const { task, felt, liked } = parsed.data;
 
   if (task.source === "generic") {
     const template = findGenericTask(task.goal);
@@ -222,6 +283,7 @@ export async function completeTaskAction(
       kind: template.goal,
       minutes,
       felt,
+      source: "suggestion",
       distance_km:
         template.goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
@@ -233,6 +295,13 @@ export async function completeTaskAction(
         message: "Could not save that completion. Please try again.",
       };
     }
+
+    await finishSuggestion(session, task.suggestionId, {
+      outcome: "done",
+      felt: toSuggestionFelt(felt),
+      liked,
+      actualMinutes: minutes,
+    });
 
     revalidatePath("/");
     return { ok: true, message: loggedMessage(minutes, goalLabel(template.goal)) };
@@ -274,6 +343,7 @@ export async function completeTaskAction(
       kind: typeof item.type === "string" && item.type ? item.type : "item",
       minutes,
       felt,
+      source: "suggestion",
       distance_km: goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
 
@@ -284,6 +354,13 @@ export async function completeTaskAction(
       message: "Could not save that completion. Please try again.",
     };
   }
+
+  await finishSuggestion(session, task.suggestionId, {
+    outcome: "done",
+    felt: toSuggestionFelt(felt),
+    liked,
+    actualMinutes: minutes,
+  });
 
   // The takeaway is optional; only write it when the user typed one so an
   // earlier note is never wiped by an empty field.

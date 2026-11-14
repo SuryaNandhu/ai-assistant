@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+
+import { SKIP_REASONS, type SkipReason } from "@/lib/suggestions";
 import type { PickedTask } from "@/lib/task";
 
 type TaskCardProps = {
@@ -9,7 +12,7 @@ type TaskCardProps = {
   busy: boolean;
   onStart: () => void;
   onDone: () => void;
-  onSkip: () => void;
+  onSkip: (reason: SkipReason) => void;
 };
 
 function formatElapsed(totalSeconds: number): string {
@@ -33,6 +36,7 @@ export function TaskCard({
   onSkip,
 }: TaskCardProps) {
   const running = elapsedSeconds !== null;
+  const [askingReason, setAskingReason] = useState(false);
 
   return (
     <section
@@ -82,14 +86,56 @@ export function TaskCard({
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={onSkip}
-        disabled={busy}
-        className="mt-2 h-11 w-full rounded-xl text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-      >
-        {busy ? "Picking another…" : "Skip"}
-      </button>
+      {askingReason ? (
+        <div className="mt-2 rounded-xl border border-border p-2">
+          <div className="flex items-center justify-between gap-2 pl-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              {busy ? "Picking another…" : "Skip because…"}
+            </p>
+            <button
+              type="button"
+              onClick={() => setAskingReason(false)}
+              disabled={busy}
+              aria-label="Keep this task"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                className="h-4 w-4"
+              >
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            {SKIP_REASONS.map((reason) => (
+              <button
+                key={reason.value}
+                type="button"
+                onClick={() => onSkip(reason.value)}
+                disabled={busy}
+                className="h-10 rounded-lg border border-border text-sm transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {reason.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAskingReason(true)}
+          disabled={busy}
+          className="mt-2 h-11 w-full rounded-xl text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+        >
+          Skip
+        </button>
+      )}
     </section>
   );
 }

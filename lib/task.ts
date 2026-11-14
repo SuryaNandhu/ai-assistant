@@ -115,6 +115,8 @@ export type TaskSource = "item" | "generic";
 export type PickedTask = {
   /** Stable identity used to exclude a task from the next pick. */
   key: string;
+  /** The `suggestions` row logged when this task was picked. */
+  suggestionId: string | null;
   source: TaskSource;
   /** Set only for real backlog items. */
   itemId: string | null;

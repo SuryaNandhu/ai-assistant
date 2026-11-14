@@ -165,6 +165,7 @@ export async function markItemReadAction(input: unknown): Promise<ItemResult> {
         kind: current.type || "item",
         minutes,
         felt: "ok",
+        source: "manual",
         distance_km: null,
       });
 

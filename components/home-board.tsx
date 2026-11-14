@@ -7,6 +7,7 @@ import { completeTaskAction, pickTaskAction, skipTaskAction } from "@/app/action
 import { DoneSheet } from "@/components/done-sheet";
 import { TaskCard } from "@/components/task-card";
 import { safeHref } from "@/lib/inbox";
+import type { SkipReason } from "@/lib/suggestions";
 import {
   DEFAULT_ENERGY,
   DEFAULT_MINUTES,
@@ -102,7 +103,7 @@ export function HomeBoard() {
     });
   }
 
-  function handleSkip() {
+  function handleSkip(reason: SkipReason) {
     if (!task || picking) return;
 
     const current = task;
@@ -117,7 +118,9 @@ export function HomeBoard() {
           itemId: current.itemId,
           goal: current.goal,
           key: current.key,
+          suggestionId: current.suggestionId,
         },
+        reason,
       });
 
       if (!result.ok) {
@@ -157,6 +160,7 @@ export function HomeBoard() {
     felt: Felt;
     distanceKm: number | null;
     takeaway: string | null;
+    liked: boolean | null;
   }) {
     if (!task || saving) return;
 
@@ -173,8 +177,10 @@ export function HomeBoard() {
           elapsedMinutes,
           distanceKm: input.distanceKm,
           takeaway: input.takeaway,
+          suggestionId: current.suggestionId,
         },
         felt: input.felt,
+        liked: input.liked,
       });
 
       if (!result.ok) {
@@ -287,6 +293,7 @@ export function HomeBoard() {
       <div className="mt-4">
         {task ? (
           <TaskCard
+            key={task.key}
             task={task}
             elapsedSeconds={startedAt === null ? null : elapsedSeconds}
             busy={busy}

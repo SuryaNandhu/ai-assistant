@@ -22,8 +22,15 @@ type DoneSheetProps = {
     felt: Felt;
     distanceKm: number | null;
     takeaway: string | null;
+    liked: boolean | null;
   }) => void;
 };
+
+/** A quick "was this the right kind of thing?" answer. */
+const LIKE_OPTIONS: readonly { value: boolean; label: string; emoji: string }[] = [
+  { value: true, label: "Yes", emoji: "👍" },
+  { value: false, label: "No", emoji: "👎" },
+];
 
 /** Bottom sheet shown when a task is done: how it felt, plus km for a run. */
 export function DoneSheet({
@@ -38,6 +45,7 @@ export function DoneSheet({
   const [felt, setFelt] = useState<Felt>("ok");
   const [distance, setDistance] = useState(String(DEFAULT_DISTANCE_KM));
   const [takeaway, setTakeaway] = useState(task.takeaway ?? "");
+  const [liked, setLiked] = useState<boolean | null>(null);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -54,7 +62,7 @@ export function DoneSheet({
     const saved = takeaway.trim() ? takeaway.trim().slice(0, 280) : null;
 
     if (!isWalk) {
-      onConfirm({ felt, distanceKm: null, takeaway: saved });
+      onConfirm({ felt, distanceKm: null, takeaway: saved, liked });
       return;
     }
 
@@ -63,7 +71,7 @@ export function DoneSheet({
       ? Math.min(100, Math.max(0, parsed))
       : DEFAULT_DISTANCE_KM;
 
-    onConfirm({ felt, distanceKm, takeaway: saved });
+    onConfirm({ felt, distanceKm, takeaway: saved, liked });
   }
 
   return (
@@ -160,6 +168,36 @@ export function DoneSheet({
             </p>
           </div>
         )}
+
+        <fieldset className="mt-4">
+          <legend className="text-sm font-medium">More like this?</legend>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {LIKE_OPTIONS.map((option) => {
+              const active = liked === option.value;
+
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setLiked(active ? null : option.value)}
+                  className={[
+                    "flex h-12 items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
+                    active
+                      ? "border-transparent bg-accent text-accent-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  ].join(" ")}
+                >
+                  <span aria-hidden="true">{option.emoji}</span>
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Optional. Teaches the picker which kind of task to bring back.
+          </p>
+        </fieldset>
 
         {error && (
           <p

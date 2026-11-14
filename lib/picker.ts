@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { revisitDueAt } from "@/lib/inbox";
+import { toSuggestionMode } from "@/lib/suggestions";
 import {
   findGoalProgress,
   loadWeeklyProgress,
@@ -34,6 +35,8 @@ type ItemRow = {
   takeaway: string | null;
   /** Set while the item is parked for later; null means it is fair game. */
   revisit_at: string | null;
+  /** Topic tags, used to learn which subjects the user actually finishes. */
+  tags: string[] | null;
 };
 
 export type PickRequest = {
@@ -53,7 +56,13 @@ export type PickContext = {
   now?: Date;
 };
 
-type Candidate = { task: PickedTask; weight: number };
+type Candidate = {
+  task: PickedTask;
+  weight: number;
+  /** Copied onto the suggestion row so feedback can be per tag/type. */
+  tags: string[];
+  estMinutes: number;
+};
 
 function itemMinutes(item: ItemRow): number {
   const est = item.est_minutes;
@@ -102,8 +111,8 @@ function reasonFor(label: string, progress: GoalProgress | undefined): string {
 }
 
 /** Picks one candidate with probability proportional to its weight. */
-export function pickWeighted<T>(
-  candidates: readonly { task: T; weight: number }[],
+export function pickWeighted<T extends { weight: number }>(
+  candidates: readonly T[],
   random: () => number = Math.random,
 ): T | null {
   if (candidates.length === 0) return null;
@@ -118,15 +127,15 @@ export function pickWeighted<T>(
       candidates.length - 1,
       Math.floor(random() * candidates.length),
     );
-    return candidates[index].task;
+    return candidates[index];
   }
 
   let threshold = random() * total;
   for (const candidate of candidates) {
     threshold -= Math.max(0, candidate.weight);
-    if (threshold < 0) return candidate.task;
+    if (threshold < 0) return candidate;
   }
-  return candidates[candidates.length - 1].task;
+  return candidates[candidates.length - 1];
 }
 
 async function loadTodoItems(
@@ -136,7 +145,7 @@ async function loadTodoItems(
   const { data, error } = await supabase
     .from("items")
     .select(
-      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway, revisit_at",
+      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway, revisit_at, tags",
     )
     .eq("user_id", userId)
     .eq("status", "todo")
@@ -161,6 +170,7 @@ function itemCandidate(
   return {
     task: {
       key: taskKey("item", item.id, item.goal),
+      suggestionId: null,
       source: "item",
       itemId: item.id,
       title: item.title,
@@ -175,6 +185,8 @@ function itemCandidate(
       takeaway: item.takeaway ?? null,
     },
     weight: weightFor(target, mode),
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    estMinutes: itemMinutes(item),
   };
 }
 
@@ -189,6 +201,7 @@ function genericCandidate(
   return {
     task: {
       key: taskKey("generic", null, template.goal),
+      suggestionId: null,
       source: "generic",
       itemId: null,
       title: template.title,
@@ -201,6 +214,8 @@ function genericCandidate(
       reason: reasonFor(label, target),
     },
     weight: weightFor(target, mode),
+    tags: [],
+    estMinutes: template.minutes,
   };
 }
 
@@ -217,6 +232,61 @@ function genericCandidates(
 }
 
 /**
+ * The `type` stored on a suggestion. Generic ideas have no item type of their
+ * own, so their goal ("leetcode", "walk_run") is the useful label — that is
+ * also what completions record as `kind`.
+ */
+function suggestionType(task: PickedTask): string {
+  if (task.source === "generic") return task.goal ?? "generic";
+  return task.type;
+}
+
+/**
+ * Writes the suggestion the user is about to see. The row starts as 'pending'
+ * and is updated when the task is done or skipped; pending rows older than 12
+ * hours are read as 'ignored', so nothing has to sweep them.
+ */
+async function logSuggestion(
+  context: PickContext,
+  request: PickRequest,
+  candidate: Candidate,
+  now: Date,
+): Promise<string> {
+  const { task } = candidate;
+
+  const { data, error } = await context.supabase
+    .from("suggestions")
+    .insert({
+      user_id: context.userId,
+      item_id: task.itemId,
+      title: task.title,
+      goal: task.goal,
+      type: suggestionType(task),
+      tags: candidate.tags,
+      shown_at: now.toISOString(),
+      time_available: request.minutes,
+      energy: request.energy,
+      mode: toSuggestionMode(request.mode),
+      outcome: "pending",
+      meta: {
+        key: task.key,
+        source: task.source,
+        est_minutes: candidate.estMinutes,
+        score: Number(candidate.weight.toFixed(3)),
+        reason: task.reason,
+      },
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new Error(`Could not log the suggestion: ${error.message}`);
+  }
+
+  return String(data.id);
+}
+
+/**
  * Chooses one task for the user.
  *
  * "smart" looks at real backlog items first and prefers the goal that is
@@ -224,6 +294,9 @@ function genericCandidates(
  * light bias towards neglected goals. Both fall back to the generic catalog
  * when the backlog has nothing that fits. Returns null when even the catalog
  * has no task for this time/energy combination.
+ *
+ * Every task that goes out is logged to `suggestions` first, so the picker can
+ * learn from what happens next.
  */
 export async function pickTask(
   context: PickContext,
@@ -246,11 +319,16 @@ export async function pickTask(
     (candidate) => !exclude.has(candidate.task.key),
   );
 
-  if (request.mode === "surprise") {
-    return pickWeighted([...availableItems, ...availableGeneric]);
-  }
+  const chosen =
+    request.mode === "surprise"
+      ? pickWeighted([...availableItems, ...availableGeneric])
+      : pickWeighted(
+          availableItems.length > 0 ? availableItems : availableGeneric,
+        );
 
-  return pickWeighted(
-    availableItems.length > 0 ? availableItems : availableGeneric,
-  );
+  if (!chosen) return null;
+
+  const suggestionId = await logSuggestion(context, request, chosen, now);
+  return { ...chosen.task, suggestionId };
 }
+
