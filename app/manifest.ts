@@ -15,9 +15,9 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     background_color: "#ffffff",
     theme_color: "#18181b",
-    /** Android share sheet: "Share → AI Assistant" opens the add page. */
+    /** Android share sheet: "Share → AI Assistant" opens the save page. */
     share_target: {
-      action: "/inbox/add",
+      action: "/saved/add",
       method: "GET",
       params: {
         title: "title",

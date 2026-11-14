@@ -51,17 +51,6 @@ export function HomeBoard() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
 
-  // Summaries are keyed by item id so a late answer for a previous task can
-  // never appear under the task that is currently on screen.
-  const [summary, setSummary] = useState<{ itemId: string; text: string } | null>(
-    null,
-  );
-  const [summaryError, setSummaryError] = useState<{
-    itemId: string;
-    message: string;
-  } | null>(null);
-  const [summarizingId, setSummarizingId] = useState<string | null>(null);
-
   const [picking, startPicking] = useTransition();
   const [saving, startSaving] = useTransition();
 
@@ -83,7 +72,6 @@ export function HomeBoard() {
     setSheetOpen(false);
     setSheetError(null);
     setError(null);
-    setSummaryError(null);
   }
 
   function handlePick(nextMode: PickMode) {
@@ -156,41 +144,6 @@ export function HomeBoard() {
     if (startedAt === null) {
       setStartedAt(Date.now());
       setElapsedSeconds(0);
-    }
-  }
-
-  /** "Summarize first": read the gist before committing to the task. */
-  async function handleSummarize() {
-    if (!task?.itemId || summarizingId) return;
-
-    const itemId = task.itemId;
-    setSummarizingId(itemId);
-    setSummaryError(null);
-
-    try {
-      const response = await fetch(`/api/items/${itemId}/summarize`, {
-        method: "POST",
-      });
-      const body = (await response.json().catch(() => null)) as
-        | { ok?: boolean; message?: string; summary?: string }
-        | null;
-
-      if (!response.ok || !body?.ok || typeof body.summary !== "string") {
-        setSummaryError({
-          itemId,
-          message: body?.message ?? "Could not summarise this link. Try again.",
-        });
-        return;
-      }
-
-      setSummary({ itemId, text: body.summary });
-    } catch {
-      setSummaryError({
-        itemId,
-        message: "Could not reach the server. Check your connection.",
-      });
-    } finally {
-      setSummarizingId(null);
     }
   }
 
@@ -337,15 +290,9 @@ export function HomeBoard() {
             task={task}
             elapsedSeconds={startedAt === null ? null : elapsedSeconds}
             busy={busy}
-            summary={summary?.itemId === task.itemId ? summary.text : null}
-            summaryError={
-              summaryError?.itemId === task.itemId ? summaryError.message : null
-            }
-            summarizing={task.itemId !== null && summarizingId === task.itemId}
             onStart={handleStart}
             onDone={handleDone}
             onSkip={handleSkip}
-            onSummarize={handleSummarize}
           />
         ) : noMatch ? (
           <div className="rounded-2xl border border-dashed border-border p-4">

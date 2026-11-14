@@ -33,11 +33,16 @@ create table if not exists public.items (
   takeaway text,
   summarized_at timestamptz,
   added_via text default 'manual',
+  revisit_at timestamptz,
+  tags text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
 create index if not exists items_user_status_idx
   on public.items (user_id, status, created_at desc);
+
+create index if not exists items_tags_idx
+  on public.items using gin (tags);
 
 -- ---------------------------------------------------------------------------
 -- completions: what was actually done (practice, study, project work)

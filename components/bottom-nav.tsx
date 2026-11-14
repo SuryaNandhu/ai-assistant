@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/", label: "Home", icon: HomeIcon },
-  { href: "/inbox", label: "Inbox", icon: InboxIcon },
+  { href: "/saved", label: "Saved", icon: SavedIcon },
   { href: "/chat", label: "Chat", icon: ChatIcon },
 ] as const;
 
@@ -65,7 +65,7 @@ function HomeIcon() {
   );
 }
 
-function InboxIcon() {
+function SavedIcon() {
   return (
     <svg
       aria-hidden="true"

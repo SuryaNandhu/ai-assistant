@@ -48,7 +48,7 @@ export function itemTypeLabel(type: string | null | undefined): string {
   return pretty.charAt(0).toUpperCase() + pretty.slice(1);
 }
 
-/** One row of `items`, as the inbox reads it. */
+/** One row of `items`, as the saved screen reads it. */
 export type InboxItem = {
   id: string;
   title: string;
@@ -60,16 +60,131 @@ export type InboxItem = {
   energy: Energy;
   notes: string | null;
   source_domain: string | null;
-  summary: string | null;
-  takeaway: string | null;
-  summarized_at: string | null;
   added_via: string | null;
+  /** Set when the link was deferred: it comes back on/after this instant. */
+  revisit_at: string | null;
+  /** Short lowercase topic tags. */
+  tags: string[];
   created_at: string;
 };
 
-/** Columns selected for every inbox item (kept in one place). */
+/** Columns selected for every saved item (kept in one place). */
 export const INBOX_ITEM_COLUMNS =
-  "id, title, url, type, goal, status, est_minutes, energy, notes, source_domain, summary, takeaway, summarized_at, added_via, created_at";
+  "id, title, url, type, goal, status, est_minutes, energy, notes, source_domain, added_via, revisit_at, tags, created_at";
+
+// ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
+
+export const MAX_TAG_COUNT = 3;
+export const MAX_TAG_LENGTH = 30;
+
+/**
+ * Cleans whatever the model (or a user) typed into a tag list: trimmed,
+ * lowercase, 30 chars max, deduplicated in order, at most three. Junk entries
+ * are dropped rather than rejected, so one odd tag never loses the rest.
+ */
+export function normalizeTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+
+  const seen = new Set<string>();
+  const tags: string[] = [];
+
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+
+    const tag = raw
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .slice(0, MAX_TAG_LENGTH)
+      .trim();
+
+    if (!tag || seen.has(tag)) continue;
+
+    seen.add(tag);
+    tags.push(tag);
+
+    if (tags.length >= MAX_TAG_COUNT) break;
+  }
+
+  return tags;
+}
+
+/** Splits a comma-separated tag field the same way the server will. */
+export function parseTagInput(value: string): string[] {
+  return normalizeTags(value.split(","));
+}
+
+/** "react, system design" — for compact display and form values. */
+export function formatTags(tags: readonly string[] | null | undefined): string {
+  return (tags ?? []).join(", ");
+}
+
+// ---------------------------------------------------------------------------
+// Saved screen buckets: Unread / Revisit / Read
+// ---------------------------------------------------------------------------
+
+export type SavedBucket = "unread" | "revisit" | "read" | "dropped";
+
+export const SAVED_TABS = ["unread", "revisit", "read"] as const;
+
+export type SavedTab = (typeof SAVED_TABS)[number];
+
+export const SAVED_TAB_LABELS: Record<SavedTab, string> = {
+  unread: "Unread",
+  revisit: "Revisit",
+  read: "Read",
+};
+
+/**
+ * True while a deferred item is still parked. A missing or unreadable date
+ * counts as "due now", so a bad value can never hide an item forever.
+ */
+export function revisitDueAt(
+  revisitAt: string | null | undefined,
+  now: Date,
+): boolean {
+  if (!revisitAt) return true;
+
+  const at = Date.parse(revisitAt);
+  if (!Number.isFinite(at)) return true;
+
+  return at <= now.getTime();
+}
+
+/** Which tab an item belongs to. Dropped items are hidden everywhere. */
+export function savedBucketOf(item: InboxItem, now: Date): SavedBucket {
+  if (item.status === "dropped") return "dropped";
+  if (item.status === "done") return "read";
+
+  return revisitDueAt(item.revisit_at, now) ? "unread" : "revisit";
+}
+
+/** Number of whole months a revisit can be pushed out by. */
+export const REVISIT_MONTHS = [1, 2] as const;
+
+export type RevisitMonths = (typeof REVISIT_MONTHS)[number];
+
+/**
+ * `date` plus N calendar months, clamped to the target month's length so
+ * 31 Jan + 1 month is 28/29 Feb rather than drifting into March.
+ * Works in UTC, which keeps server and tests identical.
+ */
+export function addMonths(date: Date, months: number): Date {
+  const next = new Date(date.getTime());
+  const day = next.getUTCDate();
+
+  next.setUTCDate(1);
+  next.setUTCMonth(next.getUTCMonth() + months);
+
+  const lastDay = new Date(
+    Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+
+  next.setUTCDate(Math.min(day, lastDay));
+  return next;
+}
 
 export const ADDED_VIA_VALUES = ["manual", "share", "api"] as const;
 

@@ -3,24 +3,23 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
-  ITEM_STATUSES,
-  ITEM_STATUS_LABELS,
   ITEM_TYPES,
+  MAX_TAG_COUNT,
+  formatTags,
   itemTypeLabel,
+  parseTagInput,
   type GoalOption,
   type InboxItem,
-  type ItemStatus,
 } from "@/lib/inbox";
 import { ENERGY_LABELS, ENERGY_LEVELS, type Energy } from "@/lib/task";
 
+/** Exactly what the Edit sheet lets you change on a saved link. */
 export type ItemEditInput = {
-  title: string;
   type: string;
   goal: string | null;
   est_minutes: number;
   energy: Energy;
-  notes: string | null;
-  status: ItemStatus;
+  tags: string[];
 };
 
 type ItemEditSheetProps = {
@@ -32,19 +31,14 @@ type ItemEditSheetProps = {
   onSave: (input: ItemEditInput) => void;
 };
 
-function chipClass(active: boolean): string {
-  return [
-    "h-11 rounded-xl border text-sm font-medium transition-colors",
-    active
-      ? "border-transparent bg-accent text-accent-foreground"
-      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
-  ].join(" ");
-}
-
 const INPUT_CLASS =
   "mt-2 h-12 w-full rounded-xl border border-border bg-background px-3 text-base outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10";
 
-/** Bottom sheet for fixing up a saved link: type, goal, time, energy, status. */
+function knownType(type: string): string {
+  return (ITEM_TYPES as readonly string[]).includes(type) ? type : "other";
+}
+
+/** Bottom sheet for fixing up a saved link: type, goal, time, energy, tags. */
 export function ItemEditSheet({
   item,
   goals,
@@ -53,13 +47,11 @@ export function ItemEditSheet({
   onCancel,
   onSave,
 }: ItemEditSheetProps) {
-  const [title, setTitle] = useState(item.title);
-  const [type, setType] = useState(item.type);
+  const [type, setType] = useState(knownType(item.type));
   const [goal, setGoal] = useState(item.goal ?? "");
   const [minutes, setMinutes] = useState(String(item.est_minutes ?? 10));
   const [energy, setEnergy] = useState<Energy>(item.energy);
-  const [notes, setNotes] = useState(item.notes ?? "");
-  const [status, setStatus] = useState<ItemStatus>(item.status);
+  const [tags, setTags] = useState(formatTags(item.tags));
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -86,13 +78,11 @@ export function ItemEditSheet({
       : (item.est_minutes ?? 10);
 
     onSave({
-      title: title.trim() || item.title,
       type,
       goal: goal || null,
       est_minutes: est,
       energy,
-      notes: notes.trim() ? notes.trim() : null,
-      status,
+      tags: parseTagInput(tags),
     });
   }
 
@@ -112,71 +102,52 @@ export function ItemEditSheet({
 
       <form
         onSubmit={handleSubmit}
-        className="relative max-h-[88dvh] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl"
+        className="relative max-h-[88dvh] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
       >
-        <div
-          aria-hidden="true"
-          className="mx-auto mb-3 h-1 w-10 rounded-full bg-border"
-        />
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border" />
 
-        <h2 id="edit-sheet-title" className="text-base font-semibold">
-          Edit item
+        <h2 id="edit-sheet-title" className="text-lg font-semibold tracking-tight">
+          Edit link
         </h2>
-        {item.source_domain && (
-          <p className="mt-1 text-xs text-muted-foreground">{item.source_domain}</p>
-        )}
+        <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
+          {item.title}
+        </p>
 
         <div className="mt-4">
-          <label htmlFor="item-title" className="text-sm font-medium">
-            Title
+          <label htmlFor="item-goal" className="text-sm font-medium">
+            Goal
           </label>
-          <input
-            id="item-title"
-            type="text"
-            value={title}
-            maxLength={300}
-            onChange={(event) => setTitle(event.target.value)}
+          <select
+            id="item-goal"
+            value={goal}
+            onChange={(event) => setGoal(event.target.value)}
             className={INPUT_CLASS}
-          />
+          >
+            <option value="">No goal</option>
+            {goalOptions.map((option) => (
+              <option key={option.goal} value={option.goal}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <div>
-            <label htmlFor="item-type" className="text-sm font-medium">
-              Type
-            </label>
-            <select
-              id="item-type"
-              value={type}
-              onChange={(event) => setType(event.target.value)}
-              className={INPUT_CLASS}
-            >
-              {ITEM_TYPES.map((option) => (
-                <option key={option} value={option}>
-                  {itemTypeLabel(option)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="item-goal" className="text-sm font-medium">
-              Goal
-            </label>
-            <select
-              id="item-goal"
-              value={goal}
-              onChange={(event) => setGoal(event.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="">No goal</option>
-              {goalOptions.map((option) => (
-                <option key={option.goal} value={option.goal}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="mt-4">
+          <label htmlFor="item-type" className="text-sm font-medium">
+            Type
+          </label>
+          <select
+            id="item-type"
+            value={type}
+            onChange={(event) => setType(event.target.value)}
+            className={INPUT_CLASS}
+          >
+            {ITEM_TYPES.map((option) => (
+              <option key={option} value={option}>
+                {itemTypeLabel(option)}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="mt-4">
@@ -204,7 +175,12 @@ export function ItemEditSheet({
                 type="button"
                 aria-pressed={energy === level}
                 onClick={() => setEnergy(level)}
-                className={chipClass(energy === level)}
+                className={[
+                  "h-11 rounded-xl border text-sm font-medium transition-colors",
+                  energy === level
+                    ? "border-transparent bg-accent text-accent-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                ].join(" ")}
               >
                 {ENERGY_LABELS[level]}
               </button>
@@ -212,35 +188,23 @@ export function ItemEditSheet({
           </div>
         </fieldset>
 
-        <fieldset className="mt-4">
-          <legend className="text-sm font-medium">Status</legend>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {ITEM_STATUSES.map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={status === option}
-                onClick={() => setStatus(option)}
-                className={chipClass(status === option)}
-              >
-                {ITEM_STATUS_LABELS[option]}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
         <div className="mt-4">
-          <label htmlFor="item-notes" className="text-sm font-medium">
-            Notes
+          <label htmlFor="item-tags" className="text-sm font-medium">
+            Tags
           </label>
-          <textarea
-            id="item-notes"
-            value={notes}
-            rows={3}
-            maxLength={2000}
-            onChange={(event) => setNotes(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2 text-base outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
+          <input
+            id="item-tags"
+            type="text"
+            value={tags}
+            onChange={(event) => setTags(event.target.value)}
+            placeholder="react, system design"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className={INPUT_CLASS}
           />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Comma separated, up to {MAX_TAG_COUNT}. Tags are lowercase.
+          </p>
         </div>
 
         {error && (
@@ -273,4 +237,3 @@ export function ItemEditSheet({
     </div>
   );
 }
-

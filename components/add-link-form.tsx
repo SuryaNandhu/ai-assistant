@@ -65,7 +65,7 @@ export function AddLinkForm({ initialUrl, initialNote, goals }: AddLinkFormProps
         return;
       }
 
-      router.replace("/inbox");
+      router.replace("/saved");
       router.refresh();
     } catch {
       setError("Could not reach the server. Check your connection and try again.");
@@ -123,8 +123,8 @@ export function AddLinkForm({ initialUrl, initialNote, goals }: AddLinkFormProps
       </select>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        The title, type and estimate fill in by themselves a few seconds after
-        saving. You can fix anything in the inbox.
+        The title, tags and estimate fill in by themselves a few seconds after
+        saving. You can fix anything in Saved.
       </p>
 
       {error && (
@@ -141,9 +141,9 @@ export function AddLinkForm({ initialUrl, initialNote, goals }: AddLinkFormProps
           role="status"
           className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
         >
-          That link is already in your inbox.{" "}
-          <Link href="/inbox" className="font-medium underline">
-            Open the inbox
+          That link is already saved.{" "}
+          <Link href="/saved" className="font-medium underline">
+            Open Saved
           </Link>
           .
         </p>
@@ -151,7 +151,7 @@ export function AddLinkForm({ initialUrl, initialNote, goals }: AddLinkFormProps
 
       <div className="mt-5 grid grid-cols-2 gap-2">
         <Link
-          href="/inbox"
+          href="/saved"
           className="h-12 rounded-xl border border-border text-center text-sm font-medium leading-[2.75rem] text-muted-foreground hover:bg-muted"
         >
           Cancel

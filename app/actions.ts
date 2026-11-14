@@ -302,6 +302,6 @@ export async function completeTaskAction(
   }
 
   revalidatePath("/");
-  revalidatePath("/inbox");
+  revalidatePath("/saved");
   return { ok: true, message: loggedMessage(minutes, goalLabel(goal)) };
 }
