@@ -5,8 +5,10 @@ import { useEffect, useState, useTransition } from "react";
 
 import { completeTaskAction, pickTaskAction, skipTaskAction } from "@/app/actions";
 import { DoneSheet } from "@/components/done-sheet";
+import { QuickLog } from "@/components/quick-log";
 import { TaskCard } from "@/components/task-card";
 import { safeHref } from "@/lib/inbox";
+import type { QuickLogTarget } from "@/lib/quick-log";
 import type { SkipReason } from "@/lib/suggestions";
 import {
   DEFAULT_ENERGY,
@@ -31,8 +33,17 @@ function chipClass(active: boolean): string {
   ].join(" ");
 }
 
+type HomeBoardProps = {
+  /** Quick-log chips, already ordered with walk/run first. */
+  targets: readonly QuickLogTarget[];
+  /** Today's IST day key. */
+  todayKey: string;
+  /** The earliest day a quick log may use. */
+  minDayKey: string;
+};
+
 /** Time/energy chips, the two pick buttons and the current task card. */
-export function HomeBoard() {
+export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
   const router = useRouter();
 
   const [minutes, setMinutes] = useState<TimeOption>(DEFAULT_MINUTES);
@@ -271,6 +282,8 @@ export function HomeBoard() {
           Surprise me
         </button>
       </div>
+
+      <QuickLog targets={targets} todayKey={todayKey} minDayKey={minDayKey} />
 
       {error && (
         <p

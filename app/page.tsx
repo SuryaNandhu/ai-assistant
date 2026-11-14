@@ -9,8 +9,13 @@ import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
+import {
+  QUICK_LOG_MAX_DAYS_BACK,
+  quickLogTargets,
+} from "@/lib/quick-log";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
+import { istDayKey, shiftDayKey } from "@/lib/week";
 
 // Auth-gated page: always evaluate the session at request time.
 export const dynamic = "force-dynamic";
@@ -32,6 +37,10 @@ export default async function HomePage() {
   const user = await requireUser();
   const supabase = await createClient();
 
+  // The IST day keys are fixed on the server so the client never disagrees.
+  const todayKey = istDayKey(new Date());
+  const minDayKey = shiftDayKey(todayKey, -QUICK_LOG_MAX_DAYS_BACK);
+
   let progress: WeeklyProgress | null = null;
   let streak: Streak | null = null;
   let statsError: string | null = null;
@@ -51,7 +60,11 @@ export default async function HomePage() {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <AppHeader email={user.email} />
         <HomeHeader progress={progress} streak={streak} error={statsError} />
-        <HomeBoard />
+        <HomeBoard
+          targets={quickLogTargets(progress?.goals ?? [])}
+          todayKey={todayKey}
+          minDayKey={minDayKey}
+        />
       </div>
       <QuickSaveButton />
       <BottomNav />
