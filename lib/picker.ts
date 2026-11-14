@@ -1,91 +1,66 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+/**
+ * Pure scoring for the "What now?" picker.
+ *
+ * Nothing here reads the clock or touches Supabase: the service layer gathers
+ * the numbers and this file turns them into a weight, which keeps the
+ * behaviour predictable and easy to check by hand.
+ *
+ *   score = goal gap × preference × fit × skip penalty
+ *
+ * - goal gap:   a weekly target that is behind pulls harder (as before).
+ * - preference: smoothed per-tag and per-type history of done / liked /
+ *               skipped-as-not-interested.
+ * - fit:        calibrated time against the slot the user picked, plus a soft
+ *               penalty for types skipped as "too long" and energy levels
+ *               skipped as "too hard".
+ * - skip:       a task skipped moments ago is pushed right down for a while.
+ *
+ * Both pick buttons reserve part of their rolls for a uniform random pick, so
+ * the app keeps exploring instead of locking onto one topic.
+ */
 
-import { revisitDueAt } from "@/lib/inbox";
-import { toSuggestionMode } from "@/lib/suggestions";
-import {
-  findGoalProgress,
-  loadWeeklyProgress,
-  type GoalProgress,
-  type WeeklyProgress,
-} from "@/lib/progress";
-import {
-  DEFAULT_MINUTES,
-  GENERIC_TASKS,
-  energyRank,
-  goalLabel,
-  taskKey,
-  type Energy,
-  type GenericTask,
-  type PickMode,
-  type PickedTask,
-} from "@/lib/task";
+import type { PickMode } from "./task";
 
-/** A skipped task stays out of the rotation for a day. */
-export const SKIP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-type ItemRow = {
-  id: string;
-  title: string;
-  url: string | null;
-  type: string;
-  goal: string | null;
-  est_minutes: number | null;
-  energy: string | null;
-  last_skipped_at: string | null;
-  takeaway: string | null;
-  /** Set while the item is parked for later; null means it is fair game. */
-  revisit_at: string | null;
-  /** Topic tags, used to learn which subjects the user actually finishes. */
-  tags: string[] | null;
+/** Preferences only look at the recent past; tastes change. */
+export const FEEDBACK_WINDOW_DAYS = 60;
+
+/** How many finished suggestions feed the per-type time calibration. */
+export const CALIBRATION_SAMPLE = 20;
+export const CALIBRATION_MIN = 0.5;
+export const CALIBRATION_MAX = 2;
+
+/** Laplace smoothing: a small prior so one event never decides anything. */
+export const PREFERENCE_PRIOR = 2;
+export const PREFERENCE_MIN = 0.5;
+export const PREFERENCE_MAX = 1.5;
+
+/** A type × tag preference is clamped a little wider than a single key. */
+export const COMBINED_PREFERENCE_MIN = 0.4;
+export const COMBINED_PREFERENCE_MAX = 1.75;
+
+/** Share of picks taken uniformly at random from everything eligible. */
+export const EXPLORATION_RATE: Record<PickMode, number> = {
+  smart: 0.15,
+  surprise: 0.3,
 };
 
-export type PickRequest = {
-  mode: PickMode;
-  /** Minutes the user has right now. */
-  minutes: number;
-  /** Energy the user has right now. */
-  energy: Energy;
-  /** Task keys already shown this round, so a re-roll moves on. */
-  exclude?: readonly string[];
-};
+/** Items up to 50% over the slot are still shown, but down-weighted. */
+export const TIME_GRACE = 1.5;
 
-export type PickContext = {
-  supabase: SupabaseClient;
-  userId: string;
-  /** Injectable clock, which keeps the tests deterministic. */
-  now?: Date;
-};
+export const SKIP_FRESH_MS = DAY_MS;
+export const SKIP_RECENT_MS = 3 * DAY_MS;
+export const SKIP_FRESH_FACTOR = 0.15;
+export const SKIP_RECENT_FACTOR = 0.45;
 
-type Candidate = {
-  task: PickedTask;
-  weight: number;
-  /** Copied onto the suggestion row so feedback can be per tag/type. */
-  tags: string[];
-  estMinutes: number;
-};
+/** "Too long" / "too hard" skips: 12% per event, capped at 3 events. */
+export const REASON_PENALTY_STEP = 0.12;
+export const REASON_PENALTY_FLOOR = 0.7;
+export const REASON_PENALTY_CAP = 3;
 
-function itemMinutes(item: ItemRow): number {
-  const est = item.est_minutes;
-  return typeof est === "number" && est > 0 ? est : DEFAULT_MINUTES;
-}
-
-function itemEnergy(item: ItemRow): Energy {
-  return item.energy === "low" || item.energy === "high" ? item.energy : "normal";
-}
-
-function skippedRecently(item: ItemRow, now: Date): boolean {
-  if (!item.last_skipped_at) return false;
-  const skippedAt = Date.parse(item.last_skipped_at);
-  if (!Number.isFinite(skippedAt)) return false;
-  return now.getTime() - skippedAt < SKIP_COOLDOWN_MS;
-}
-
-/** Time, energy, the 24 hour skip cooldown and any active revisit date. */
-function isEligible(item: ItemRow, request: PickRequest, now: Date): boolean {
-  if (!revisitDueAt(item.revisit_at, now)) return false;
-  if (itemMinutes(item) > request.minutes) return false;
-  if (energyRank(itemEnergy(item)) > energyRank(request.energy)) return false;
-  return !skippedRecently(item, now);
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 /**
@@ -94,241 +69,322 @@ function isEligible(item: ItemRow, request: PickRequest, now: Date): boolean {
  *  smart     → 1 + 3 × behind   (a fully behind goal is 4× as likely)
  *  surprise  → 1 + 1 × behind   (a light nudge, still mostly random)
  */
-function weightFor(progress: GoalProgress | undefined, mode: PickMode): number {
-  if (!progress || progress.perWeek <= 0) return 1;
-  const deficit = Math.max(0, progress.perWeek - progress.done);
-  const behind = deficit / progress.perWeek;
+export function goalGapWeight(
+  perWeek: number,
+  done: number,
+  mode: PickMode,
+): number {
+  if (!Number.isFinite(perWeek) || perWeek <= 0) return 1;
+  const behind = Math.max(0, perWeek - done) / perWeek;
   return mode === "smart" ? 1 + 3 * behind : 1 + behind;
 }
 
-/** One line explaining the pick, e.g. "LeetCode is 0/3 this week". */
-function reasonFor(label: string, progress: GoalProgress | undefined): string {
-  if (!progress) return `No weekly target for ${label} yet`;
-  if (progress.done >= progress.perWeek) {
-    return `${label} is already ${progress.done}/${progress.perWeek} this week`;
-  }
-  return `${label} is ${progress.done}/${progress.perWeek} this week`;
+
+/** One past suggestion, reduced to what scoring needs. */
+export type FeedbackEvent = {
+  /** The suggestion's activity: `items.type`, or the goal for a generic idea. */
+  type: string | null;
+  tags: readonly string[] | null;
+  energy: string | null;
+  /** Already normalised through `effectiveOutcome` (pending can be ignored). */
+  outcome: string;
+  liked: boolean | null;
+  skipReason: string | null;
+  shownAt: Date;
+};
+
+export type PreferenceStats = {
+  byType: ReadonlyMap<string, number>;
+  byTag: ReadonlyMap<string, number>;
+  tooLongByType: ReadonlyMap<string, number>;
+  tooHardByEnergy: ReadonlyMap<string, number>;
+};
+
+type Totals = { sum: number; count: number };
+
+function bump(totals: Map<string, Totals>, key: string, amount: number): void {
+  const current = totals.get(key) ?? { sum: 0, count: 0 };
+  current.sum += amount;
+  current.count += 1;
+  totals.set(key, current);
 }
 
-/** Picks one candidate with probability proportional to its weight. */
-export function pickWeighted<T extends { weight: number }>(
-  candidates: readonly T[],
-  random: () => number = Math.random,
-): T | null {
-  if (candidates.length === 0) return null;
+function bumpCount(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
 
-  const total = candidates.reduce(
-    (sum, candidate) => sum + Math.max(0, candidate.weight),
-    0,
+/**
+ * What one suggestion says about the topic: finishing it is good, a thumbs up
+ * is a smaller good, a thumbs down or "not interested" is bad.
+ */
+export function feedbackWeight(event: FeedbackEvent): number {
+  let weight = 0;
+  if (event.outcome === "done") weight += 1;
+  if (event.liked === true) weight += 0.5;
+  if (event.liked === false) weight -= 1;
+  if (event.outcome === "skipped" && event.skipReason === "not_interested") {
+    weight -= 1;
+  }
+  return weight;
+}
+
+function smoothed(totals: Map<string, Totals>): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const [key, { sum, count }] of totals) {
+    const value = 1 + sum / (count + PREFERENCE_PRIOR);
+    result.set(key, clamp(value, PREFERENCE_MIN, PREFERENCE_MAX));
+  }
+  return result;
+}
+
+/** Turns the last 60 days of suggestions into multipliers around 1. */
+export function buildPreferences(
+  events: readonly FeedbackEvent[],
+  now: Date,
+): PreferenceStats {
+  const since = now.getTime() - FEEDBACK_WINDOW_DAYS * DAY_MS;
+  const byType = new Map<string, Totals>();
+  const byTag = new Map<string, Totals>();
+  const tooLongByType = new Map<string, number>();
+  const tooHardByEnergy = new Map<string, number>();
+
+  for (const event of events) {
+    if (event.shownAt.getTime() < since) continue;
+
+    const weight = feedbackWeight(event);
+    if (weight !== 0 && event.type) bump(byType, event.type, weight);
+    if (weight !== 0) {
+      for (const tag of event.tags ?? []) bump(byTag, tag, weight);
+    }
+
+    if (event.outcome !== "skipped") continue;
+    if (event.skipReason === "too_long" && event.type) {
+      bumpCount(tooLongByType, event.type);
+    }
+    if (event.skipReason === "too_hard" && event.energy) {
+      bumpCount(tooHardByEnergy, event.energy);
+    }
+  }
+
+  return {
+    byType: smoothed(byType),
+    byTag: smoothed(byTag),
+    tooLongByType,
+    tooHardByEnergy,
+  };
+}
+
+export function median(values: readonly number[]): number {
+  if (values.length === 0) return 1;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+export type CalibrationInput = {
+  type: string | null;
+  actualMinutes: number | null;
+  estMinutes: number | null;
+};
+
+/**
+ * Per type, how long things really take versus the estimate. Feed in the last
+ * 20 finished suggestions per type, newest first; the median keeps one
+ * distracted afternoon from moving the number.
+ */
+export function calibrationFactors(
+  rows: readonly CalibrationInput[],
+): ReadonlyMap<string, number> {
+  const ratios = new Map<string, number[]>();
+
+  for (const row of rows) {
+    if (!row.type) continue;
+    const { actualMinutes, estMinutes } = row;
+    if (typeof actualMinutes !== "number" || actualMinutes <= 0) continue;
+    if (typeof estMinutes !== "number" || estMinutes <= 0) continue;
+
+    const list = ratios.get(row.type) ?? [];
+    if (list.length >= CALIBRATION_SAMPLE) continue;
+    list.push(actualMinutes / estMinutes);
+    ratios.set(row.type, list);
+  }
+
+  const factors = new Map<string, number>();
+  for (const [type, values] of ratios) {
+    factors.set(type, clamp(median(values), CALIBRATION_MIN, CALIBRATION_MAX));
+  }
+  return factors;
+}
+
+/** Applies the learned factor to a raw estimate, so the card shows reality. */
+export function calibratedMinutes(
+  estMinutes: number,
+  type: string,
+  calibration: ReadonlyMap<string, number>,
+): number {
+  const factor = calibration.get(type) ?? 1;
+  return Math.max(5, Math.round(estMinutes * factor));
+}
+
+/** Everything scoring needs to know about one candidate task. */
+export type CandidateFeatures = {
+  /** Learning key: `items.type`, or the goal for a generic idea. */
+  type: string;
+  tags: readonly string[];
+  energy: string;
+  /** Calibrated estimate in minutes. */
+  minutes: number;
+  availableMinutes: number;
+  lastSkippedAt: Date | null;
+  /** Weekly goal gap, already weighted for the mode. */
+  goalWeight: number;
+};
+
+export type ScoreContext = {
+  now: Date;
+  preferences: PreferenceStats;
+};
+
+export type ScoreFactors = {
+  goal: number;
+  preference: number;
+  fit: number;
+  skip: number;
+};
+
+export function preferenceFor(
+  features: CandidateFeatures,
+  preferences: PreferenceStats,
+): number {
+  const typePreference = preferences.byType.get(features.type) ?? 1;
+
+  if (features.tags.length === 0) {
+    return clamp(typePreference, PREFERENCE_MIN, PREFERENCE_MAX);
+  }
+
+  let tagTotal = 0;
+  for (const tag of features.tags) tagTotal += preferences.byTag.get(tag) ?? 1;
+  const tagPreference = tagTotal / features.tags.length;
+
+  return clamp(
+    typePreference * tagPreference,
+    COMBINED_PREFERENCE_MIN,
+    COMBINED_PREFERENCE_MAX,
   );
+}
+
+/** 1 when it fits the slot, falling away as the calibrated time overruns it. */
+export function timeFit(minutes: number, availableMinutes: number): number {
+  if (availableMinutes <= 0) return 0.5;
+  if (minutes <= availableMinutes) return 1;
+  const overrun = minutes / availableMinutes - 1;
+  return Math.max(0.4, 1 - 0.6 * overrun);
+}
+
+function reasonPenalty(count: number): number {
+  return Math.max(
+    REASON_PENALTY_FLOOR,
+    1 - REASON_PENALTY_STEP * Math.min(count, REASON_PENALTY_CAP),
+  );
+}
+
+export function fitFor(
+  features: CandidateFeatures,
+  preferences: PreferenceStats,
+): number {
+  const time = timeFit(features.minutes, features.availableMinutes);
+  const tooLong = reasonPenalty(
+    preferences.tooLongByType.get(features.type) ?? 0,
+  );
+  const tooHard = reasonPenalty(
+    preferences.tooHardByEnergy.get(features.energy) ?? 0,
+  );
+  return time * tooLong * tooHard;
+}
+
+/** A freshly skipped task drops out of sight for a day, then creeps back. */
+export function skipPenalty(lastSkippedAt: Date | null, now: Date): number {
+  if (!lastSkippedAt) return 1;
+
+  const age = now.getTime() - lastSkippedAt.getTime();
+  if (!Number.isFinite(age) || age < 0) return SKIP_FRESH_FACTOR;
+  if (age < SKIP_FRESH_MS) return SKIP_FRESH_FACTOR;
+  if (age < SKIP_RECENT_MS) return SKIP_RECENT_FACTOR;
+  return 1;
+}
+
+export function scoreCandidate(
+  features: CandidateFeatures,
+  context: ScoreContext,
+): { score: number; factors: ScoreFactors } {
+  const factors: ScoreFactors = {
+    goal: features.goalWeight,
+    preference: preferenceFor(features, context.preferences),
+    fit: fitFor(features, context.preferences),
+    skip: skipPenalty(features.lastSkippedAt, context.now),
+  };
+
+  return {
+    score: Math.max(0, factors.goal * factors.preference * factors.fit * factors.skip),
+    factors,
+  };
+}
+
+export type Scored<T> = {
+  candidate: T;
+  features: CandidateFeatures;
+  score: number;
+  factors: ScoreFactors;
+};
+
+export function scoreSources<T extends { features: CandidateFeatures }>(
+  sources: readonly T[],
+  context: ScoreContext,
+): Scored<T>[] {
+  return sources.map((source) => {
+    const { score, factors } = scoreCandidate(source.features, context);
+    return { candidate: source, features: source.features, score, factors };
+  });
+}
+
+/**
+ * Rolls the dice: sometimes a uniform random pick, otherwise a weighted one.
+ * The random pick is what stops a strong preference from closing off the rest
+ * of the backlog.
+ */
+export function chooseCandidate<T>(
+  scored: readonly Scored<T>[],
+  mode: PickMode,
+  random: () => number = Math.random,
+): Scored<T> | null {
+  if (scored.length === 0) return null;
+  if (scored.length === 1) return scored[0];
+
+  if (random() < EXPLORATION_RATE[mode]) {
+    const index = Math.min(
+      scored.length - 1,
+      Math.floor(random() * scored.length),
+    );
+    return scored[index];
+  }
+
+  const total = scored.reduce((sum, entry) => sum + entry.score, 0);
 
   if (total <= 0) {
     const index = Math.min(
-      candidates.length - 1,
-      Math.floor(random() * candidates.length),
+      scored.length - 1,
+      Math.floor(random() * scored.length),
     );
-    return candidates[index];
+    return scored[index];
   }
 
   let threshold = random() * total;
-  for (const candidate of candidates) {
-    threshold -= Math.max(0, candidate.weight);
-    if (threshold < 0) return candidate;
+  for (const entry of scored) {
+    threshold -= entry.score;
+    if (threshold < 0) return entry;
   }
-  return candidates[candidates.length - 1];
-}
-
-async function loadTodoItems(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<ItemRow[]> {
-  const { data, error } = await supabase
-    .from("items")
-    .select(
-      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway, revisit_at, tags",
-    )
-    .eq("user_id", userId)
-    .eq("status", "todo")
-    .order("created_at", { ascending: true })
-    .limit(200);
-
-  if (error) {
-    throw new Error(`Could not load your items: ${error.message}`);
-  }
-
-  return (data ?? []) as ItemRow[];
-}
-
-function itemCandidate(
-  item: ItemRow,
-  progress: WeeklyProgress,
-  mode: PickMode,
-): Candidate {
-  const target = findGoalProgress(progress, item.goal);
-  const label = goalLabel(item.goal, target?.label);
-
-  return {
-    task: {
-      key: taskKey("item", item.id, item.goal),
-      suggestionId: null,
-      source: "item",
-      itemId: item.id,
-      title: item.title,
-      type: typeof item.type === "string" && item.type ? item.type : "item",
-      goal: item.goal,
-      goalLabel: label,
-      minutes: itemMinutes(item),
-      energy: itemEnergy(item),
-      url: item.url,
-      // Items without a goal have nothing to compare against.
-      reason: item.goal ? reasonFor(label, target) : "From your backlog",
-      takeaway: item.takeaway ?? null,
-    },
-    weight: weightFor(target, mode),
-    tags: Array.isArray(item.tags) ? item.tags : [],
-    estMinutes: itemMinutes(item),
-  };
-}
-
-function genericCandidate(
-  template: GenericTask,
-  progress: WeeklyProgress,
-  mode: PickMode,
-): Candidate {
-  const target = findGoalProgress(progress, template.goal);
-  const label = goalLabel(template.goal, target?.label);
-
-  return {
-    task: {
-      key: taskKey("generic", null, template.goal),
-      suggestionId: null,
-      source: "generic",
-      itemId: null,
-      title: template.title,
-      type: "generic",
-      goal: template.goal,
-      goalLabel: label,
-      minutes: template.minutes,
-      energy: template.energy,
-      url: null,
-      reason: reasonFor(label, target),
-    },
-    weight: weightFor(target, mode),
-    tags: [],
-    estMinutes: template.minutes,
-  };
-}
-
-/** Generic ideas that fit the chosen slot and energy level. */
-function genericCandidates(
-  progress: WeeklyProgress,
-  request: PickRequest,
-): Candidate[] {
-  return GENERIC_TASKS.filter(
-    (template) =>
-      template.minutes <= request.minutes &&
-      energyRank(template.energy) <= energyRank(request.energy),
-  ).map((template) => genericCandidate(template, progress, request.mode));
-}
-
-/**
- * The `type` stored on a suggestion. Generic ideas have no item type of their
- * own, so their goal ("leetcode", "walk_run") is the useful label — that is
- * also what completions record as `kind`.
- */
-function suggestionType(task: PickedTask): string {
-  if (task.source === "generic") return task.goal ?? "generic";
-  return task.type;
-}
-
-/**
- * Writes the suggestion the user is about to see. The row starts as 'pending'
- * and is updated when the task is done or skipped; pending rows older than 12
- * hours are read as 'ignored', so nothing has to sweep them.
- */
-async function logSuggestion(
-  context: PickContext,
-  request: PickRequest,
-  candidate: Candidate,
-  now: Date,
-): Promise<string> {
-  const { task } = candidate;
-
-  const { data, error } = await context.supabase
-    .from("suggestions")
-    .insert({
-      user_id: context.userId,
-      item_id: task.itemId,
-      title: task.title,
-      goal: task.goal,
-      type: suggestionType(task),
-      tags: candidate.tags,
-      shown_at: now.toISOString(),
-      time_available: request.minutes,
-      energy: request.energy,
-      mode: toSuggestionMode(request.mode),
-      outcome: "pending",
-      meta: {
-        key: task.key,
-        source: task.source,
-        est_minutes: candidate.estMinutes,
-        score: Number(candidate.weight.toFixed(3)),
-        reason: task.reason,
-      },
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    throw new Error(`Could not log the suggestion: ${error.message}`);
-  }
-
-  return String(data.id);
-}
-
-/**
- * Chooses one task for the user.
- *
- * "smart" looks at real backlog items first and prefers the goal that is
- * furthest behind this week; "surprise" mixes items and generic ideas with a
- * light bias towards neglected goals. Both fall back to the generic catalog
- * when the backlog has nothing that fits. Returns null when even the catalog
- * has no task for this time/energy combination.
- *
- * Every task that goes out is logged to `suggestions` first, so the picker can
- * learn from what happens next.
- */
-export async function pickTask(
-  context: PickContext,
-  request: PickRequest,
-): Promise<PickedTask | null> {
-  const now = context.now ?? new Date();
-  const exclude = new Set(request.exclude ?? []);
-
-  const [items, progress] = await Promise.all([
-    loadTodoItems(context.supabase, context.userId),
-    loadWeeklyProgress(context.supabase, context.userId, now),
-  ]);
-
-  const availableItems = items
-    .filter((item) => isEligible(item, request, now))
-    .map((item) => itemCandidate(item, progress, request.mode))
-    .filter((candidate) => !exclude.has(candidate.task.key));
-
-  const availableGeneric = genericCandidates(progress, request).filter(
-    (candidate) => !exclude.has(candidate.task.key),
-  );
-
-  const chosen =
-    request.mode === "surprise"
-      ? pickWeighted([...availableItems, ...availableGeneric])
-      : pickWeighted(
-          availableItems.length > 0 ? availableItems : availableGeneric,
-        );
-
-  if (!chosen) return null;
-
-  const suggestionId = await logSuggestion(context, request, chosen, now);
-  return { ...chosen.task, suggestionId };
+  return scored[scored.length - 1];
 }
 

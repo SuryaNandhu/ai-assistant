@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
-import { pickTask, type PickRequest } from "@/lib/picker";
+import { pickTask, type PickRequest } from "@/lib/pick-service";
 import {
   SKIP_REASON_VALUES,
   toSuggestionFelt,
