@@ -26,7 +26,8 @@ export function JournalCard({ entry, showPrompt }: JournalCardProps) {
   const router = useRouter();
 
   const [current, setCurrent] = useState<JournalEntry | null>(entry);
-  const [editing, setEditing] = useState(showPrompt);
+  // Only open straight into the form when the day has not been written yet.
+  const [editing, setEditing] = useState(showPrompt && entry === null);
   const [mood, setMood] = useState<number | null>(entry?.mood ?? null);
   const [note, setNote] = useState(entry?.note ?? "");
   const [error, setError] = useState<string | null>(null);
