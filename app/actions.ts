@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { errorMessage } from "@/lib/env";
+import { describeDbError } from "@/lib/errors";
 import { pickTask, type PickRequest } from "@/lib/picker";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -54,6 +54,8 @@ const completeSchema = z.object({
     /** Whole minutes on the clock; null means "use the estimate". */
     elapsedMinutes: z.number().int().min(1).max(600).nullable().default(null),
     distanceKm: z.number().min(0).max(100).nullable().default(null),
+    /** One-line takeaway for a link; ignored for generic suggestions. */
+    takeaway: z.string().trim().max(280).nullable().default(null),
   }),
   felt: feltSchema,
 });
@@ -71,15 +73,6 @@ async function requireSession(): Promise<Session | null> {
   }
 
   return { supabase, userId: data.claims.sub };
-}
-
-/** Turns low-level Postgres errors into something the user can act on. */
-function describeError(error: unknown): string {
-  const message = errorMessage(error);
-  if (/does not exist|schema cache|relation|column .* does not exist/i.test(message)) {
-    return "Your database is missing part of the schema. Run supabase/schema.sql in the Supabase SQL editor, then reload.";
-  }
-  return message;
 }
 
 function toPickRequest(input: z.infer<typeof pickSchema>): PickRequest {
@@ -109,7 +102,7 @@ export async function pickTaskAction(input: unknown): Promise<PickResult> {
     return { ok: true, task };
   } catch (error) {
     console.error("Could not pick a task:", error);
-    return { ok: false, message: describeError(error) };
+    return { ok: false, message: describeDbError(error) };
   }
 }
 
@@ -142,7 +135,7 @@ export async function skipTaskAction(input: unknown): Promise<PickResult> {
     return { ok: true, task: next };
   } catch (error) {
     console.error("Could not pick a task after skipping:", error);
-    return { ok: false, message: describeError(error) };
+    return { ok: false, message: describeDbError(error) };
   }
 }
 
@@ -258,7 +251,7 @@ export async function completeTaskAction(
 
   if (itemError) {
     console.error("Could not load the item:", itemError.message);
-    return { ok: false, message: describeError(itemError) };
+    return { ok: false, message: describeDbError(itemError) };
   }
 
   if (!item) {
@@ -292,9 +285,14 @@ export async function completeTaskAction(
     };
   }
 
+  // The takeaway is optional; only write it when the user typed one so an
+  // earlier note is never wiped by an empty field.
+  const itemUpdate: { status: string; takeaway?: string } = { status: "done" };
+  if (task.takeaway) itemUpdate.takeaway = task.takeaway;
+
   const { error: updateError } = await session.supabase
     .from("items")
-    .update({ status: "done" })
+    .update(itemUpdate)
     .eq("id", item.id)
     .eq("user_id", session.userId);
 
@@ -304,5 +302,6 @@ export async function completeTaskAction(
   }
 
   revalidatePath("/");
+  revalidatePath("/inbox");
   return { ok: true, message: loggedMessage(minutes, goalLabel(goal)) };
 }

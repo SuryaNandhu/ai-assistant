@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+
 import type { PickedTask } from "@/lib/task";
 
 type TaskCardProps = {
@@ -5,9 +9,17 @@ type TaskCardProps = {
   /** Seconds on the clock, or null when the timer has not started. */
   elapsedSeconds: number | null;
   busy: boolean;
+  /** Cached summary for this task's item, if one has been generated. */
+  summary?: string | null;
+  /** Why the last summary attempt failed. */
+  summaryError?: string | null;
+  /** A summary request is in flight for this task. */
+  summarizing?: boolean;
   onStart: () => void;
   onDone: () => void;
   onSkip: () => void;
+  /** Only offered for saved inbox items. */
+  onSummarize?: () => void;
 };
 
 function formatElapsed(totalSeconds: number): string {
@@ -26,11 +38,16 @@ export function TaskCard({
   task,
   elapsedSeconds,
   busy,
+  summary = null,
+  summaryError = null,
+  summarizing = false,
   onStart,
   onDone,
   onSkip,
+  onSummarize,
 }: TaskCardProps) {
   const running = elapsedSeconds !== null;
+  const [summaryOpen, setSummaryOpen] = useState(true);
 
   return (
     <section
@@ -68,7 +85,7 @@ export function TaskCard({
           disabled={busy}
           className="h-12 rounded-xl bg-accent px-3 text-base font-semibold text-accent-foreground transition-opacity disabled:opacity-50"
         >
-          {running ? "Reopen" : "Start"}
+          {running ? "Reopen" : task.url ? "Open link" : "Start"}
         </button>
         <button
           type="button"
@@ -79,6 +96,49 @@ export function TaskCard({
           Done
         </button>
       </div>
+
+      {task.itemId !== null && onSummarize && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={onSummarize}
+            disabled={busy || summarizing}
+            className="h-11 w-full rounded-xl border border-dashed border-border text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {summarizing
+              ? "Summarising…"
+              : summary
+                ? "Summarize again"
+                : "Summarize first"}
+          </button>
+
+          {summaryError && (
+            <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+              {summaryError}
+            </p>
+          )}
+
+          {summary && (
+            <div className="mt-2 rounded-xl bg-muted p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Summary
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSummaryOpen((open) => !open)}
+                  className="text-xs font-medium text-muted-foreground underline"
+                >
+                  {summaryOpen ? "Hide" : "Show"}
+                </button>
+              </div>
+              {summaryOpen && (
+                <p className="mt-1 whitespace-pre-line text-sm">{summary}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <button
         type="button"

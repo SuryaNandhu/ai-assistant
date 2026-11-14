@@ -6,6 +6,7 @@ import { useEffect, useState, useTransition } from "react";
 import { completeTaskAction, pickTaskAction, skipTaskAction } from "@/app/actions";
 import { DoneSheet } from "@/components/done-sheet";
 import { TaskCard } from "@/components/task-card";
+import { safeHref } from "@/lib/inbox";
 import {
   DEFAULT_ENERGY,
   DEFAULT_MINUTES,
@@ -50,6 +51,17 @@ export function HomeBoard() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
 
+  // Summaries are keyed by item id so a late answer for a previous task can
+  // never appear under the task that is currently on screen.
+  const [summary, setSummary] = useState<{ itemId: string; text: string } | null>(
+    null,
+  );
+  const [summaryError, setSummaryError] = useState<{
+    itemId: string;
+    message: string;
+  } | null>(null);
+  const [summarizingId, setSummarizingId] = useState<string | null>(null);
+
   const [picking, startPicking] = useTransition();
   const [saving, startSaving] = useTransition();
 
@@ -71,6 +83,7 @@ export function HomeBoard() {
     setSheetOpen(false);
     setSheetError(null);
     setError(null);
+    setSummaryError(null);
   }
 
   function handlePick(nextMode: PickMode) {
@@ -135,13 +148,49 @@ export function HomeBoard() {
   function handleStart() {
     if (!task) return;
 
-    if (task.url) {
-      window.open(task.url, "_blank", "noopener,noreferrer");
+    const href = safeHref(task.url);
+    if (href) {
+      window.open(href, "_blank", "noopener,noreferrer");
     }
 
     if (startedAt === null) {
       setStartedAt(Date.now());
       setElapsedSeconds(0);
+    }
+  }
+
+  /** "Summarize first": read the gist before committing to the task. */
+  async function handleSummarize() {
+    if (!task?.itemId || summarizingId) return;
+
+    const itemId = task.itemId;
+    setSummarizingId(itemId);
+    setSummaryError(null);
+
+    try {
+      const response = await fetch(`/api/items/${itemId}/summarize`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { ok?: boolean; message?: string; summary?: string }
+        | null;
+
+      if (!response.ok || !body?.ok || typeof body.summary !== "string") {
+        setSummaryError({
+          itemId,
+          message: body?.message ?? "Could not summarise this link. Try again.",
+        });
+        return;
+      }
+
+      setSummary({ itemId, text: body.summary });
+    } catch {
+      setSummaryError({
+        itemId,
+        message: "Could not reach the server. Check your connection.",
+      });
+    } finally {
+      setSummarizingId(null);
     }
   }
 
@@ -151,7 +200,11 @@ export function HomeBoard() {
     setSheetOpen(true);
   }
 
-  function handleConfirm(input: { felt: Felt; distanceKm: number | null }) {
+  function handleConfirm(input: {
+    felt: Felt;
+    distanceKm: number | null;
+    takeaway: string | null;
+  }) {
     if (!task || saving) return;
 
     const current = task;
@@ -166,6 +219,7 @@ export function HomeBoard() {
           goal: current.goal,
           elapsedMinutes,
           distanceKm: input.distanceKm,
+          takeaway: input.takeaway,
         },
         felt: input.felt,
       });
@@ -283,9 +337,15 @@ export function HomeBoard() {
             task={task}
             elapsedSeconds={startedAt === null ? null : elapsedSeconds}
             busy={busy}
+            summary={summary?.itemId === task.itemId ? summary.text : null}
+            summaryError={
+              summaryError?.itemId === task.itemId ? summaryError.message : null
+            }
+            summarizing={task.itemId !== null && summarizingId === task.itemId}
             onStart={handleStart}
             onDone={handleDone}
             onSkip={handleSkip}
+            onSummarize={handleSummarize}
           />
         ) : noMatch ? (
           <div className="rounded-2xl border border-dashed border-border p-4">
@@ -310,6 +370,7 @@ export function HomeBoard() {
         <DoneSheet
           task={task}
           isWalk={task.goal === DISTANCE_GOAL}
+          askTakeaway={task.itemId !== null}
           pending={saving}
           error={sheetError}
           onCancel={() => setSheetOpen(false)}

@@ -13,16 +13,23 @@ type DoneSheetProps = {
   task: PickedTask;
   /** Distance is only asked for the walk/run goal. */
   isWalk: boolean;
+  /** Offer a takeaway box (saved links only). */
+  askTakeaway: boolean;
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onConfirm: (input: { felt: Felt; distanceKm: number | null }) => void;
+  onConfirm: (input: {
+    felt: Felt;
+    distanceKm: number | null;
+    takeaway: string | null;
+  }) => void;
 };
 
 /** Bottom sheet shown when a task is done: how it felt, plus km for a run. */
 export function DoneSheet({
   task,
   isWalk,
+  askTakeaway,
   pending,
   error,
   onCancel,
@@ -30,6 +37,7 @@ export function DoneSheet({
 }: DoneSheetProps) {
   const [felt, setFelt] = useState<Felt>("ok");
   const [distance, setDistance] = useState(String(DEFAULT_DISTANCE_KM));
+  const [takeaway, setTakeaway] = useState(task.takeaway ?? "");
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -43,8 +51,10 @@ export function DoneSheet({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const saved = takeaway.trim() ? takeaway.trim().slice(0, 280) : null;
+
     if (!isWalk) {
-      onConfirm({ felt, distanceKm: null });
+      onConfirm({ felt, distanceKm: null, takeaway: saved });
       return;
     }
 
@@ -53,7 +63,7 @@ export function DoneSheet({
       ? Math.min(100, Math.max(0, parsed))
       : DEFAULT_DISTANCE_KM;
 
-    onConfirm({ felt, distanceKm });
+    onConfirm({ felt, distanceKm, takeaway: saved });
   }
 
   return (
@@ -127,6 +137,26 @@ export function DoneSheet({
             />
             <p className="mt-1 text-xs text-muted-foreground">
               Only runs at or above your target distance count towards the week.
+            </p>
+          </div>
+        )}
+
+        {askTakeaway && (
+          <div className="mt-4">
+            <label htmlFor="takeaway" className="text-sm font-medium">
+              One-line takeaway (optional)
+            </label>
+            <textarea
+              id="takeaway"
+              value={takeaway}
+              onChange={(event) => setTakeaway(event.target.value)}
+              rows={2}
+              maxLength={280}
+              placeholder="What will you remember from this?"
+              className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2 text-base outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Saved on the link so future-you gets the point without re-reading.
             </p>
           </div>
         )}

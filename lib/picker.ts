@@ -30,6 +30,7 @@ type ItemRow = {
   est_minutes: number | null;
   energy: string | null;
   last_skipped_at: string | null;
+  takeaway: string | null;
 };
 
 export type PickRequest = {
@@ -130,7 +131,9 @@ async function loadTodoItems(
 ): Promise<ItemRow[]> {
   const { data, error } = await supabase
     .from("items")
-    .select("id, title, url, type, goal, est_minutes, energy, last_skipped_at")
+    .select(
+      "id, title, url, type, goal, est_minutes, energy, last_skipped_at, takeaway",
+    )
     .eq("user_id", userId)
     .eq("status", "todo")
     .order("created_at", { ascending: true })
@@ -157,6 +160,7 @@ function itemCandidate(
       source: "item",
       itemId: item.id,
       title: item.title,
+      type: typeof item.type === "string" && item.type ? item.type : "item",
       goal: item.goal,
       goalLabel: label,
       minutes: itemMinutes(item),
@@ -164,6 +168,7 @@ function itemCandidate(
       url: item.url,
       // Items without a goal have nothing to compare against.
       reason: item.goal ? reasonFor(label, target) : "From your backlog",
+      takeaway: item.takeaway ?? null,
     },
     weight: weightFor(target, mode),
   };
@@ -183,6 +188,7 @@ function genericCandidate(
       source: "generic",
       itemId: null,
       title: template.title,
+      type: "generic",
       goal: template.goal,
       goalLabel: label,
       minutes: template.minutes,

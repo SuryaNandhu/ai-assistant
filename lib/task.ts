@@ -119,6 +119,8 @@ export type PickedTask = {
   /** Set only for real backlog items. */
   itemId: string | null;
   title: string;
+  /** Raw `items.type` for backlog items; "generic" for catalog suggestions. */
+  type: string;
   goal: string | null;
   goalLabel: string;
   minutes: number;
@@ -126,6 +128,8 @@ export type PickedTask = {
   url: string | null;
   /** One short line explaining why this task surfaced. */
   reason: string;
+  /** Existing one-line takeaway, when the item was read before. */
+  takeaway?: string | null;
 };
 
 export function taskKey(

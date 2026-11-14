@@ -28,6 +28,11 @@ create table if not exists public.items (
   skipped_count integer not null default 0,
   last_skipped_at timestamptz,
   notes text,
+  source_domain text,
+  summary text,
+  takeaway text,
+  summarized_at timestamptz,
+  added_via text default 'manual',
   created_at timestamptz not null default now()
 );
 
