@@ -7,6 +7,7 @@ import { HomeHeader } from "@/components/home-header";
 import { JournalCard } from "@/components/journal-card";
 import { ProjectCard } from "@/components/project-card";
 import { QuickSaveButton } from "@/components/quick-save";
+import { ScreenTimePrompt } from "@/components/screen-time-prompt";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
 import { currentMonth } from "@/lib/calendar";
@@ -26,11 +27,7 @@ import {
   QUICK_LOG_MAX_DAYS_BACK,
   quickLogTargets,
 } from "@/lib/quick-log";
-import {
-  SCREEN_LIMIT_DEFAULT,
-  loadScreenLimit,
-  loadScreenTimeEntry,
-} from "@/lib/screen-time";
+import { loadMissingScreenDays } from "@/lib/screen-time";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import { istDayKey, shiftDayKey } from "@/lib/week";
@@ -82,17 +79,13 @@ export default async function HomePage() {
     console.error("Could not load today's journal entry:", error);
   }
 
-  // Screen time is a small extra card; if the migration has not run yet the
-  // card still renders with the default limit and no number.
-  let screenMinutes: number | null = null;
-  let screenLimit = SCREEN_LIMIT_DEFAULT;
+  // Screen time is asked for one completed day at a time; a missing table just
+  // hides the card instead of breaking Home.
+  let missingScreenDays: string[] = [];
   try {
-    [screenMinutes, screenLimit] = await Promise.all([
-      loadScreenTimeEntry(supabase, user.id, todayKey),
-      loadScreenLimit(supabase, user.id),
-    ]);
+    missingScreenDays = await loadMissingScreenDays(supabase, user.id, now);
   } catch (error) {
-    console.error("Could not load today's screen time:", error);
+    console.error("Could not load missing screen-time days:", error);
   }
 
   // The monthly project card: a missing table hides the card, never the page.
@@ -119,11 +112,10 @@ export default async function HomePage() {
           project={projectDetail?.project ?? null}
           milestones={projectDetail?.milestones ?? []}
         />
+        <ScreenTimePrompt days={missingScreenDays} todayKey={todayKey} />
         <JournalCard
           entry={journalEntry}
           showPrompt={isJournalPromptTime(now)}
-          screenMinutes={screenMinutes}
-          screenLimit={screenLimit}
         />
       </div>
       <QuickSaveButton />

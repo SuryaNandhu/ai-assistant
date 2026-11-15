@@ -1,14 +1,14 @@
+import { z } from "zod";
+
 import { describeDbError } from "@/lib/errors";
 import {
   SCREEN_LIMIT_MAX,
   SCREEN_LIMIT_MIN,
+  SCREEN_TIME_MAX_DAYS_BACK,
   SCREEN_TIME_MAX_MINUTES,
 } from "@/lib/screen-time";
 import type { DbSession } from "@/lib/services/session";
 import { istDayKey, shiftDayKey } from "@/lib/week";
-
-/** How far back the day panel may edit screen time (mirrors the journal). */
-export const SCREEN_TIME_MAX_DAYS_BACK = 400;
 
 export type SaveScreenTimeResult =
   | { ok: true; day: string; minutes: number }
@@ -18,34 +18,57 @@ export type SaveScreenLimitResult =
   | { ok: true; limitMinutes: number }
   | { ok: false; message: string };
 
+/** Everything a screen-time write must satisfy, checked once on the server. */
+export const screenTimeEntrySchema = z.object({
+  /** IST day key. Missing means yesterday: a day only counts once it is over. */
+  day: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a day like 2026-11-13.")
+    .optional(),
+  minutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(SCREEN_TIME_MAX_MINUTES),
+});
+
+export const screenLimitSchema = z.object({
+  minutes: z.number().int().min(SCREEN_LIMIT_MIN).max(SCREEN_LIMIT_MAX),
+});
+
 /**
- * Upserts one day of screen time. Today is the default; backdating is allowed
- * for the journal window, the future never is. Kept here (not in the action)
- * so the chat tool and the UI share the same rules.
+ * Upserts one day of screen time. The day defaults to yesterday because screen
+ * time describes a finished day; backdating is allowed for the last 30 days and
+ * the future never is. Kept here (not in the action) so the chat tool and the
+ * Home card share the same rules.
  */
 export async function saveScreenTime(
   session: DbSession,
   input: { day?: string; minutes: number },
   now: Date = new Date(),
 ): Promise<SaveScreenTimeResult> {
-  const day = input.day ?? istDayKey(now);
-  const minutes = Math.round(input.minutes);
+  const parsed = screenTimeEntrySchema.safeParse(input);
 
-  if (!Number.isFinite(minutes) || minutes < 0 || minutes > SCREEN_TIME_MAX_MINUTES) {
+  if (!parsed.success) {
     return {
       ok: false,
-      message: `Screen time should be between 0 and ${SCREEN_TIME_MAX_MINUTES} minutes.`,
+      message: `Screen time should be whole minutes between 0 and ${SCREEN_TIME_MAX_MINUTES}.`,
     };
   }
 
   const todayKey = istDayKey(now);
+  const day = parsed.data.day ?? shiftDayKey(todayKey, -1);
+  const minutes = parsed.data.minutes;
 
   if (day > todayKey) {
     return { ok: false, message: "That day has not happened yet." };
   }
 
   if (day < shiftDayKey(todayKey, -SCREEN_TIME_MAX_DAYS_BACK)) {
-    return { ok: false, message: "That day is too far back to edit here." };
+    return {
+      ok: false,
+      message: `Screen time can be logged for the last ${SCREEN_TIME_MAX_DAYS_BACK} days.`,
+    };
   }
 
   const { error } = await session.supabase.from("screen_time_entries").upsert(
@@ -66,23 +89,24 @@ export async function saveScreenTime(
   return { ok: true, day, minutes };
 }
 
-/** Upserts the daily limit in `user_settings`. */
+/**
+ * Upserts a limit the user chose. There is no default: a limit only exists
+ * because someone typed or tapped one, and `clearScreenLimit` removes it again.
+ */
 export async function saveScreenLimit(
   session: DbSession,
   minutes: number,
 ): Promise<SaveScreenLimitResult> {
-  const limit = Math.round(minutes);
+  const parsed = screenLimitSchema.safeParse({ minutes });
 
-  if (
-    !Number.isFinite(limit) ||
-    limit < SCREEN_LIMIT_MIN ||
-    limit > SCREEN_LIMIT_MAX
-  ) {
+  if (!parsed.success) {
     return {
       ok: false,
       message: `Pick a limit between ${SCREEN_LIMIT_MIN} and ${SCREEN_LIMIT_MAX} minutes.`,
     };
   }
+
+  const limit = parsed.data.minutes;
 
   const { error } = await session.supabase.from("user_settings").upsert(
     {
@@ -99,4 +123,29 @@ export async function saveScreenLimit(
   }
 
   return { ok: true, limitMinutes: limit };
+}
+
+export type ClearScreenLimitResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
+ * Removes the limit row. Absence is how "no limit" is stored: the column is
+ * not nullable in the schema, so deleting the row is the honest way to say the
+ * user has not set one.
+ */
+export async function clearScreenLimit(
+  session: DbSession,
+): Promise<ClearScreenLimitResult> {
+  const { error } = await session.supabase
+    .from("user_settings")
+    .delete()
+    .eq("user_id", session.userId);
+
+  if (error) {
+    console.error("Could not clear the screen-time limit:", error.message);
+    return { ok: false, message: describeDbError(error) };
+  }
+
+  return { ok: true };
 }

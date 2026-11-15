@@ -18,7 +18,6 @@ import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
 import { QUICK_LOG_MAX_DAYS_BACK, quickLogTargets } from "@/lib/quick-log";
 import { formatKm, loadMonthActivity, type MonthActivity } from "@/lib/report";
 import {
-  SCREEN_LIMIT_DEFAULT,
   loadScreenLimit,
   loadScreenTimeSince,
   summariseScreenTime,
@@ -96,7 +95,7 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
   const streakDays = streak?.days ?? 0;
   const longest = streak?.longest ?? 0;
 
-  // Screen time: 14 fixed IST days plus the limit from `user_settings`.
+  // Screen time: 14 fixed IST days plus the optional limit (null = not set).
   let screenSummary: ScreenTimeSummary | null = null;
   let screenError: string | null = null;
 
@@ -112,7 +111,7 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
     screenError = "Could not load screen time. Reload the page and try again.";
   }
 
-  const screenLimit = screenSummary?.limitMinutes ?? SCREEN_LIMIT_DEFAULT;
+  const screenLimit = screenSummary?.limitMinutes ?? null;
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden">

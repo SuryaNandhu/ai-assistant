@@ -5,39 +5,25 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition, type FormEvent } from "react";
 
 import { saveJournalAction } from "@/app/journal/actions";
-import { saveScreenTimeAction } from "@/app/screen-time-actions";
 import {
   JOURNAL_MOODS,
   JOURNAL_NOTE_MAX,
   moodEmoji,
   type JournalEntry,
 } from "@/lib/journal";
-import {
-  SCREEN_TIME_MAX_MINUTES,
-  formatMinutes,
-  isOverLimit,
-} from "@/lib/screen-time";
 
 type JournalCardProps = {
   entry: JournalEntry | null;
   /** True from 7 pm IST when today has no entry yet. */
   showPrompt: boolean;
-  /** Today's screen time in minutes, null when it has not been logged. */
-  screenMinutes: number | null;
-  /** The user's daily limit, from `user_settings`. */
-  screenLimit: number;
 };
 
 /**
  * "How was your day?" — five emoji and one line, editable on the same day.
  * The text is only ever read here and on /journal; nothing is sent to the LLM.
+ * Screen time lives in its own card because it is about completed days.
  */
-export function JournalCard({
-  entry,
-  showPrompt,
-  screenMinutes,
-  screenLimit,
-}: JournalCardProps) {
+export function JournalCard({ entry, showPrompt }: JournalCardProps) {
   const router = useRouter();
 
   const [current, setCurrent] = useState<JournalEntry | null>(entry);
@@ -80,8 +66,7 @@ export function JournalCard({
   }
 
   return (
-    <>
-      <section className="mx-auto w-full max-w-md px-4 pb-6">
+    <section className="mx-auto w-full max-w-md px-4 pb-6">
       <div className="rounded-2xl border border-border bg-background p-4">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">
@@ -221,185 +206,6 @@ export function JournalCard({
         )}
       </div>
       </section>
-
-      <section className="mx-auto w-full max-w-md px-4 pb-6">
-        <ScreenTimeCard minutes={screenMinutes} limit={screenLimit} />
-      </section>
-    </>
-  );
-}
-
-type ScreenTimeCardProps = {
-  minutes: number | null;
-  limit: number;
-};
-
-/**
- * Today's screen time, typed straight into a small card. Saving is a single
- * upsert per IST day, so editing twice in the evening simply overwrites the
- * number instead of adding a second row.
- */
-function ScreenTimeCard({ minutes, limit }: ScreenTimeCardProps) {
-  const router = useRouter();
-
-  const [current, setCurrent] = useState<number | null>(minutes);
-  const [value, setValue] = useState(minutes === null ? "" : String(minutes));
-  const [editing, setEditing] = useState(minutes === null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const [saving, startSaving] = useTransition();
-
-  const over = isOverLimit(current, limit);
-
-  function beginEditing() {
-    setValue(current === null ? "" : String(current));
-    setError(null);
-    setNotice(null);
-    setEditing(true);
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving) return;
-
-    const parsed = Number(value);
-
-    if (
-      value.trim() === "" ||
-      !Number.isFinite(parsed) ||
-      parsed < 0 ||
-      parsed > SCREEN_TIME_MAX_MINUTES
-    ) {
-      setError(`Enter minutes between 0 and ${SCREEN_TIME_MAX_MINUTES}.`);
-      return;
-    }
-
-    setError(null);
-
-    startSaving(async () => {
-      const result = await saveScreenTimeAction({ minutes: Math.round(parsed) });
-
-      if (!result.ok) {
-        setError(result.message);
-        return;
-      }
-
-      setCurrent(Math.round(parsed));
-      setEditing(false);
-      setNotice(result.message);
-      router.refresh();
-    });
-  }
-
-  return (
-    <div className="rounded-2xl border border-border bg-background p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Screen time today</h2>
-        {!editing && current !== null && (
-          <button
-            type="button"
-            onClick={beginEditing}
-            className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-          >
-            Edit
-          </button>
-        )}
-      </div>
-
-      {editing ? (
-        <form onSubmit={handleSubmit} className="mt-3">
-          <label htmlFor="screen-minutes" className="block text-sm font-medium">
-            Minutes
-          </label>
-          <div className="mt-2 flex gap-2">
-            <input
-              id="screen-minutes"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={SCREEN_TIME_MAX_MINUTES}
-              step={5}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="90"
-              className="h-11 w-full rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
-            />
-            <button
-              type="submit"
-              disabled={saving}
-              className="h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-foreground disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-
-          {current !== null && (
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setError(null);
-              }}
-              disabled={saving}
-              className="mt-2 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          )}
-
-          <p className="mt-2 text-xs text-muted-foreground">
-            Your limit is {formatMinutes(limit)} a day.
-          </p>
-        </form>
-      ) : current === null ? (
-        <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border p-3">
-          <p className="text-sm text-muted-foreground">Not logged yet.</p>
-          <button
-            type="button"
-            onClick={beginEditing}
-            className="h-10 shrink-0 rounded-xl border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            Add
-          </button>
-        </div>
-      ) : (
-        <div className="mt-2">
-          <p className="text-2xl font-semibold tabular-nums">
-            {formatMinutes(current)}
-          </p>
-          <p
-            className={[
-              "mt-1 text-xs font-medium",
-              over
-                ? "text-red-600 dark:text-red-400"
-                : "text-emerald-700 dark:text-emerald-400",
-            ].join(" ")}
-          >
-            {over ? "Over" : "Under"} your {formatMinutes(limit)} limit
-            {over ? ` by ${formatMinutes(current - limit)}` : ""}
-          </p>
-        </div>
-      )}
-
-      {error && (
-        <p
-          role="alert"
-          className="mt-2 rounded-lg border border-red-300 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-        >
-          {error}
-        </p>
-      )}
-
-      {notice && !error && (
-        <p
-          role="status"
-          className="mt-2 rounded-lg border border-emerald-300 bg-emerald-50 p-2.5 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-        >
-          {notice}
-        </p>
-      )}
-    </div>
   );
 }
 

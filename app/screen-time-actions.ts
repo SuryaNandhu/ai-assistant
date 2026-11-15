@@ -1,35 +1,28 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
 import { formatMinutes } from "@/lib/screen-time";
 import {
+  clearScreenLimit,
   saveScreenLimit,
   saveScreenTime,
+  screenLimitSchema,
+  screenTimeEntrySchema,
 } from "@/lib/services/screen-time";
 import { createClient } from "@/lib/supabase/server";
+import { dayKeyLabel } from "@/lib/week";
 
 export type ScreenTimeActionResult =
-  | { ok: true; message: string }
+  | { ok: true; day: string; message: string }
   | { ok: false; message: string };
 
 export type ScreenLimitActionResult =
-  | { ok: true; limitMinutes: number; message: string }
+  | { ok: true; limitMinutes: number | null; message: string }
   | { ok: false; message: string };
 
 const SIGNED_OUT = "You are signed out. Refresh the page and sign in again.";
-
-const screenTimeSchema = z.object({
-  /** Missing means today. */
-  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  minutes: z.number().int().min(0).max(1440),
-});
-
-const limitSchema = z.object({
-  minutes: z.number().int().min(30).max(720),
-});
 
 async function requireSession() {
   const supabase = await createClient();
@@ -44,18 +37,18 @@ async function requireSession() {
 }
 
 /**
- * Saves screen time for one day. The form on Home and the day panel on
+ * Saves screen time for one completed day. The Home card and the day panel on
  * /progress both use this; the chat tool calls the same service directly.
  */
 export async function saveScreenTimeAction(
   input: unknown,
 ): Promise<ScreenTimeActionResult> {
-  const parsed = screenTimeSchema.safeParse(input);
+  const parsed = screenTimeEntrySchema.safeParse(input);
 
   if (!parsed.success) {
     return {
       ok: false,
-      message: "Screen time should be a whole number of minutes, 0 to 1440.",
+      message: "Screen time should be whole minutes, 0 to 1440.",
     };
   }
 
@@ -72,7 +65,8 @@ export async function saveScreenTimeAction(
 
     return {
       ok: true,
-      message: `Screen time saved: ${formatMinutes(result.minutes)}.`,
+      day: result.day,
+      message: `Screen time for ${dayKeyLabel(result.day)} saved: ${formatMinutes(result.minutes)}.`,
     };
   } catch (error) {
     console.error("Could not save screen time:", error);
@@ -80,11 +74,11 @@ export async function saveScreenTimeAction(
   }
 }
 
-/** Saves the daily limit shown on the Progress screen. */
+/** Saves the optional daily limit shown on the Progress screen. */
 export async function saveScreenLimitAction(
   input: unknown,
 ): Promise<ScreenLimitActionResult> {
-  const parsed = limitSchema.safeParse(input);
+  const parsed = screenLimitSchema.safeParse(input);
 
   if (!parsed.success) {
     return {
@@ -111,6 +105,30 @@ export async function saveScreenLimitAction(
     };
   } catch (error) {
     console.error("Could not save the screen-time limit:", error);
+    return { ok: false, message: describeDbError(error) };
+  }
+}
+
+/** Removes the limit again, so no day is flagged as over. */
+export async function clearScreenLimitAction(): Promise<ScreenLimitActionResult> {
+  const session = await requireSession();
+  if (!session) return { ok: false, message: SIGNED_OUT };
+
+  try {
+    const result = await clearScreenLimit(session);
+
+    if (!result.ok) return result;
+
+    revalidatePath("/");
+    revalidatePath("/progress");
+
+    return {
+      ok: true,
+      limitMinutes: null,
+      message: "Daily limit cleared.",
+    };
+  } catch (error) {
+    console.error("Could not clear the screen-time limit:", error);
     return { ok: false, message: describeDbError(error) };
   }
 }

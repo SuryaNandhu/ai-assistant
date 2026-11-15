@@ -3,13 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { istDayKey, shiftDayKey } from "@/lib/week";
 
 /**
- * Screen time is one number per IST day: minutes spent on the phone/laptop
- * outside work. The daily limit lives in `user_settings` and defaults to two
- * hours. Everything here is pure except the three loaders, so client
- * components can import the formatters and constants directly.
+ * Screen time is one number per completed IST day: minutes spent on the
+ * phone/laptop outside work. There is no default limit — the limit only exists
+ * once the user sets one in `user_settings`, so everything here accepts null.
+ * Pure except the loaders, so client components may import the formatters too.
  */
 
-export const SCREEN_LIMIT_DEFAULT = 120;
 export const SCREEN_LIMIT_MIN = 30;
 export const SCREEN_LIMIT_MAX = 720;
 
@@ -17,6 +16,18 @@ export const SCREEN_LIMIT_MAX = 720;
 export const SCREEN_LIMIT_OPTIONS = [60, 90, 120, 150, 180, 240] as const;
 
 export const SCREEN_TIME_MAX_MINUTES = 1440;
+
+/**
+ * Screen time describes a day that has ended, so Home asks about the last three
+ * completed days (yesterday and the two before it) and never about today.
+ */
+export const SCREEN_PROMPT_DAYS = 3;
+
+/**
+ * How far back a day can still be edited — the Home card, the chat tool and the
+ * /progress day panel all use this one window.
+ */
+export const SCREEN_TIME_MAX_DAYS_BACK = 30;
 
 /** How many days the sparkline and the weekly average look at. */
 export const SCREEN_TIME_DAYS = 14;
@@ -37,7 +48,10 @@ export type ScreenTimeDay = {
 export type ScreenTimeSummary = {
   todayKey: string;
   todayMinutes: number | null;
-  limitMinutes: number;
+  /** Last completed day — the number the panel leads with. */
+  yesterdayMinutes: number | null;
+  /** null means the user has not set a limit; nothing is flagged as over. */
+  limitMinutes: number | null;
   /** Average over the last seven days that have an entry. */
   weekAverage: number | null;
   weekLoggedDays: number;
@@ -58,17 +72,21 @@ export function formatMinutes(minutes: number): string {
   return `${hours} h ${String(rest).padStart(2, "0")} m`;
 }
 
-export function isOverLimit(minutes: number | null, limit: number): boolean {
-  return minutes !== null && minutes > limit;
+export function isOverLimit(
+  minutes: number | null,
+  limit: number | null,
+): boolean {
+  return minutes !== null && limit !== null && minutes > limit;
 }
 
 export type ScreenStatus = "under" | "over" | "none";
 
+/** `none` covers both "not logged" and "no limit set". */
 export function screenStatus(
   minutes: number | null,
-  limit: number,
+  limit: number | null,
 ): ScreenStatus {
-  if (minutes === null) return "none";
+  if (minutes === null || limit === null) return "none";
   return minutes > limit ? "over" : "under";
 }
 
@@ -124,13 +142,13 @@ export async function loadScreenTimeSince(
 }
 
 /**
- * The limit is stored in `user_settings`. A user without a row simply gets the
- * default, so no seed statement is needed when the migration runs.
+ * The limit is optional: no `user_settings` row (or a null column) means the
+ * user has not set one, and nothing is ever compared against a made-up number.
  */
 export async function loadScreenLimit(
   supabase: SupabaseClient,
   userId: string,
-): Promise<number> {
+): Promise<number | null> {
   const { data, error } = await supabase
     .from("user_settings")
     .select("screen_limit_minutes")
@@ -142,9 +160,57 @@ export async function loadScreenLimit(
   }
 
   const stored = data?.screen_limit_minutes;
-  return typeof stored === "number" && Number.isFinite(stored)
-    ? stored
-    : SCREEN_LIMIT_DEFAULT;
+  return typeof stored === "number" && Number.isFinite(stored) ? stored : null;
+}
+
+/**
+ * The last `SCREEN_PROMPT_DAYS` completed days (yesterday backwards) that have
+ * no screen time yet, oldest first. Today is never included: a day only counts
+ * once it is over.
+ */
+export async function loadMissingScreenDays(
+  supabase: SupabaseClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const todayKey = istDayKey(now);
+  const oldestKey = shiftDayKey(todayKey, -SCREEN_PROMPT_DAYS);
+
+  const { data, error } = await supabase
+    .from("screen_time_entries")
+    .select("day, minutes")
+    .eq("user_id", userId)
+    .gte("day", oldestKey)
+    .lt("day", todayKey);
+
+  if (error) {
+    throw new Error(`Could not load screen time: ${error.message}`);
+  }
+
+  const logged = new Set(
+    ((data ?? []) as { day: string; minutes: number | string | null }[])
+      .filter((row) => row.minutes !== null)
+      .map((row) => String(row.day).slice(0, 10)),
+  );
+
+  return missingScreenDays(logged, now);
+}
+
+/** Pure half of `loadMissingScreenDays`, oldest missing day first. */
+export function missingScreenDays(
+  logged: Iterable<string>,
+  now: Date = new Date(),
+): string[] {
+  const todayKey = istDayKey(now);
+  const days = new Set(logged);
+  const missing: string[] = [];
+
+  for (let offset = SCREEN_PROMPT_DAYS; offset >= 1; offset -= 1) {
+    const dayKey = shiftDayKey(todayKey, -offset);
+    if (!days.has(dayKey)) missing.push(dayKey);
+  }
+
+  return missing;
 }
 
 /**
@@ -154,10 +220,11 @@ export async function loadScreenLimit(
  */
 export function summariseScreenTime(
   entries: readonly ScreenTimeEntry[],
-  limitMinutes: number,
+  limitMinutes: number | null,
   now: Date = new Date(),
 ): ScreenTimeSummary {
   const todayKey = istDayKey(now);
+  const yesterdayKey = shiftDayKey(todayKey, -1);
   const byDay = new Map(entries.map((entry) => [entry.day, entry.minutes]));
 
   const series: ScreenTimeDay[] = Array.from(
@@ -177,10 +244,14 @@ export function summariseScreenTime(
   return {
     todayKey,
     todayMinutes: byDay.get(todayKey) ?? null,
+    yesterdayMinutes: byDay.get(yesterdayKey) ?? null,
     limitMinutes,
     weekAverage: logged.length > 0 ? Math.round(total / logged.length) : null,
     weekLoggedDays: logged.length,
-    daysOverLimit: logged.filter((day) => day.minutes > limitMinutes).length,
+    daysOverLimit:
+      limitMinutes === null
+        ? 0
+        : logged.filter((day) => day.minutes > limitMinutes).length,
     series,
   };
 }

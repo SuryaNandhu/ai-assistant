@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { saveScreenLimitAction } from "@/app/screen-time-actions";
+import { saveScreenLimitAction, clearScreenLimitAction } from "@/app/screen-time-actions";
 import {
   SCREEN_LIMIT_OPTIONS,
   formatMinutes,
@@ -27,23 +27,24 @@ function statusClass(status: "none" | "under" | "over"): string {
 }
 
 /**
- * The /progress screen-time block: today, the seven-day average, how many of
- * those days went over, a 14-day bar strip and a sheet to change the limit.
+ * The /progress screen-time block: yesterday (screen time describes a finished
+ * day), the seven-day average, how many days went over the limit, a 14-day bar
+ * strip and a sheet to set or clear that optional limit.
  */
 export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
   const router = useRouter();
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [limit, setLimit] = useState(summary.limitMinutes);
+  const [limit, setLimit] = useState<number | null>(summary.limitMinutes);
   const [limitError, setLimitError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [saving, startSaving] = useTransition();
 
-  const todayStatus = screenStatus(summary.todayMinutes, limit);
+  const yesterdayStatus = screenStatus(summary.yesterdayMinutes, limit);
   const averageStatus = screenStatus(summary.weekAverage, limit);
   const peak = Math.max(
-    limit,
+    limit ?? 0,
     ...summary.series.map((day) => day.minutes ?? 0),
   );
 
@@ -67,6 +68,26 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
     });
   }
 
+  function clearLimit() {
+    if (saving) return;
+
+    setLimitError(null);
+
+    startSaving(async () => {
+      const result = await clearScreenLimitAction();
+
+      if (!result.ok) {
+        setLimitError(result.message);
+        return;
+      }
+
+      setLimit(null);
+      setNotice(result.message);
+      setSheetOpen(false);
+      router.refresh();
+    });
+  }
+
   return (
     <section className="mt-5" aria-label="Screen time">
       <div className="flex items-center justify-between gap-2">
@@ -82,7 +103,7 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
           }}
           className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
-          Limit · {formatMinutes(limit)}
+          {limit === null ? "Set a limit" : `Limit · ${formatMinutes(limit)}`}
         </button>
       </div>
 
@@ -98,20 +119,22 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <div className="rounded-2xl border border-border p-3">
-          <p className="text-xs text-muted-foreground">Today</p>
+          <p className="text-xs text-muted-foreground">Yesterday</p>
           <p className="mt-1 text-lg font-semibold tabular-nums">
-            {summary.todayMinutes === null
+            {summary.yesterdayMinutes === null
               ? "—"
-              : formatMinutes(summary.todayMinutes)}
+              : formatMinutes(summary.yesterdayMinutes)}
           </p>
           <p
-            className={`mt-0.5 text-[11px] font-medium ${statusClass(todayStatus)}`}
+            className={`mt-0.5 text-[11px] font-medium ${statusClass(yesterdayStatus)}`}
           >
-            {todayStatus === "none"
+            {summary.yesterdayMinutes === null
               ? "Not logged"
-              : todayStatus === "over"
-                ? "Over limit"
-                : "Under limit"}
+              : yesterdayStatus === "none"
+                ? "Logged"
+                : yesterdayStatus === "over"
+                  ? "Over limit"
+                  : "Under limit"}
           </p>
         </div>
 
@@ -139,7 +162,9 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
               {summary.daysOverLimit === 1 ? "day" : "days"}
             </span>
           </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Last 7 days</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {limit === null ? "No limit set" : "Last 7 days"}
+          </p>
         </div>
       </div>
 
@@ -176,10 +201,12 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
         </div>
         <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
           <span>2 weeks ago</span>
-          <span>
-            <span className="mr-1 inline-block h-2 w-2 rounded-[2px] bg-red-500/80 align-middle" />
-            over limit
-          </span>
+          {limit !== null && (
+            <span>
+              <span className="mr-1 inline-block h-2 w-2 rounded-[2px] bg-red-500/80 align-middle" />
+              over limit
+            </span>
+          )}
           <span>Today</span>
         </div>
       </div>
@@ -199,6 +226,7 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
           saving={saving}
           error={limitError}
           onPick={saveLimit}
+          onClear={clearLimit}
           onClose={() => setSheetOpen(false)}
         />
       )}
@@ -207,15 +235,23 @@ export function ScreenTimePanel({ summary, error }: ScreenTimeSummaryProps) {
 }
 
 type LimitSheetProps = {
-  limit: number;
+  limit: number | null;
   saving: boolean;
   error: string | null;
   onPick: (minutes: number) => void;
+  onClear: () => void;
   onClose: () => void;
 };
 
 /** Bottom sheet with preset limits; picking one saves straight away. */
-function LimitSheet({ limit, saving, error, onPick, onClose }: LimitSheetProps) {
+function LimitSheet({
+  limit,
+  saving,
+  error,
+  onPick,
+  onClear,
+  onClose,
+}: LimitSheetProps) {
   const [custom, setCustom] = useState("");
 
   useEffect(() => {
@@ -264,7 +300,7 @@ function LimitSheet({ limit, saving, error, onPick, onClose }: LimitSheetProps) 
         </div>
 
         <p className="mt-1 text-xs text-muted-foreground">
-          Days above this show as red.
+          Optional. Days above it show as red.
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -325,6 +361,17 @@ function LimitSheet({ limit, saving, error, onPick, onClose }: LimitSheetProps) 
             Between 30 min and 12 h.
           </p>
         </form>
+
+        {limit !== null && (
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={saving}
+            className="mt-3 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+          >
+            Remove the limit
+          </button>
+        )}
 
         {error && (
           <p

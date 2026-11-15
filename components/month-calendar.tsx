@@ -23,8 +23,8 @@ type MonthCalendarProps = {
   /** Earliest day the quick-log shortcut may use. */
   minDayKey: string;
   targets: readonly QuickLogTarget[];
-  /** Daily screen-time limit, shown in the day panel. */
-  screenLimit: number;
+  /** Optional daily screen-time limit, shown in the day panel. */
+  screenLimit: number | null;
 };
 
 /** 0, 1, 2 and "3 or more" shades; all four flip with dark mode. */

@@ -14,12 +14,13 @@ import { JOURNAL_MOODS, JOURNAL_NOTE_MAX, moodEmoji } from "@/lib/journal";
 import { QUICK_LOG_MAX_DAYS_BACK, type QuickLogTarget } from "@/lib/quick-log";
 import { formatKm, type CompletionEntry, type DayJournal } from "@/lib/report";
 import {
+  SCREEN_TIME_MAX_DAYS_BACK,
   SCREEN_TIME_MAX_MINUTES,
   formatMinutes,
   isOverLimit,
 } from "@/lib/screen-time";
 import { DISTANCE_GOAL, FELT_OPTIONS, type Felt } from "@/lib/task";
-import { dayKeyLabel } from "@/lib/week";
+import { dayKeyLabel, shiftDayKey } from "@/lib/week";
 
 type EditDraft = {
   minutes: string;
@@ -312,8 +313,8 @@ type DaySheetProps = {
   journal: DayJournal | null;
   /** Screen time for this day, null when it was not logged. */
   screenMinutes: number | null;
-  /** The user's daily limit, from `user_settings`. */
-  screenLimit: number;
+  /** The user's daily limit, from `user_settings`; null when not set. */
+  screenLimit: number | null;
   todayKey: string;
   /** Earliest day a quick log may use. */
   minDayKey: string;
@@ -365,7 +366,11 @@ export function DaySheet({
   }, [onClose, quickLogOpen]);
 
   const canQuickLog = dayKey >= minDayKey && dayKey <= todayKey;
-  const canEditScreen = dayKey <= todayKey;
+  // Screen time is a completed-day number, so the future is out and the window
+  // matches what the server accepts.
+  const canEditScreen =
+    dayKey <= todayKey &&
+    dayKey >= shiftDayKey(todayKey, -SCREEN_TIME_MAX_DAYS_BACK);
   const screenOver = isOverLimit(screenMinutes, screenLimit);
   const distanceKm = completions.reduce(
     (total, entry) =>
@@ -686,9 +691,11 @@ export function DaySheet({
                   >
                     Cancel
                   </button>
-                  <p className="text-xs text-muted-foreground">
-                    Limit {formatMinutes(screenLimit)}
-                  </p>
+                  {screenLimit !== null && (
+                    <p className="text-xs text-muted-foreground">
+                      Limit {formatMinutes(screenLimit)}
+                    </p>
+                  )}
                 </div>
               </form>
             ) : screenMinutes === null ? (
@@ -709,16 +716,19 @@ export function DaySheet({
                 <p className="text-lg font-semibold tabular-nums">
                   {formatMinutes(screenMinutes)}
                 </p>
-                <p
-                  className={[
-                    "mt-0.5 text-xs font-medium",
-                    screenOver
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-emerald-700 dark:text-emerald-400",
-                  ].join(" ")}
-                >
-                  {screenOver ? "Over" : "Under"} the {formatMinutes(screenLimit)} limit
-                </p>
+                {screenLimit !== null && (
+                  <p
+                    className={[
+                      "mt-0.5 text-xs font-medium",
+                      screenOver
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-emerald-700 dark:text-emerald-400",
+                    ].join(" ")}
+                  >
+                    {screenOver ? "Over" : "Under"} the{" "}
+                    {formatMinutes(screenLimit)} limit
+                  </p>
+                )}
               </div>
             )}
           </section>
