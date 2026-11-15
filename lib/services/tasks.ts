@@ -2,6 +2,7 @@ import {
   pickTask,
   type PickRequest,
 } from "@/lib/pick-service";
+import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import type { DbSession } from "@/lib/services/session";
 import {
   effectiveOutcome,
@@ -20,6 +21,7 @@ import {
   type PickedTask,
   type TaskSource,
 } from "@/lib/task";
+import { istDayKey } from "@/lib/week";
 
 /** The slot sizes the Home screen offers; the chat tools accept the same. */
 export const PICK_MINUTES = [15, 30, 60] as const;
@@ -105,6 +107,36 @@ async function finishSuggestion(
 }
 
 /**
+ * A suggestion older than the edit window is closed: its outcome and feedback
+ * can no longer change. Pending rows expire after 12 hours, so this only guards
+ * against a stale id arriving from an old tab or conversation.
+ */
+async function closedSuggestionMessage(
+  session: DbSession,
+  suggestionId: string | null,
+): Promise<string | null> {
+  if (!suggestionId) return null;
+
+  const { data, error } = await session.supabase
+    .from("suggestions")
+    .select("shown_at")
+    .eq("id", suggestionId)
+    .eq("user_id", session.userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Could not read the suggestion day:", error.message);
+    return null;
+  }
+
+  if (!data?.shown_at) return null;
+
+  return isLocked(istDayKey(new Date(String(data.shown_at))))
+    ? LOCKED_MESSAGE
+    : null;
+}
+
+/**
  * Supabase's REST API cannot express `skipped_count + 1`, so read the current
  * value first. One user, one device at a time — good enough here.
  */
@@ -174,6 +206,9 @@ export async function completePickedTask(
   input: CompleteTaskInput,
 ): Promise<CompleteTaskResult> {
   const { task, felt, liked } = input;
+
+  const closed = await closedSuggestionMessage(session, task.suggestionId);
+  if (closed) return { ok: false, message: closed };
 
   if (task.source === "generic") {
     const template = findGenericTask(task.goal);
@@ -318,6 +353,9 @@ export async function skipPickedTask(
 ): Promise<SkipTaskResult> {
   const { task, reason } = input;
 
+  const closed = await closedSuggestionMessage(session, task.suggestionId);
+  if (closed) return { ok: false, message: closed };
+
   if (task.source === "item" && task.itemId) {
     await recordSkip(session, task.itemId);
   }
@@ -382,6 +420,10 @@ export async function loadOpenSuggestion(
   }
 
   const row = data as SuggestionRow;
+
+  if (isLocked(istDayKey(new Date(row.shown_at)))) {
+    return { ok: false, message: LOCKED_MESSAGE };
+  }
 
   if (effectiveOutcome(row, now) !== "pending") {
     return {

@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
+import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import { createClient } from "@/lib/supabase/server";
 import { DISTANCE_GOAL } from "@/lib/task";
+import { istDayKey } from "@/lib/week";
 
 type Session = {
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -77,10 +79,15 @@ export async function updateCompletionAction(input: unknown): Promise<Completion
 
   const { data: row, error: readError } = await session.supabase
     .from("completions")
-    .select("id, goal, distance_km")
+    .select("id, goal, distance_km, completed_at")
     .eq("id", id)
     .eq("user_id", session.userId)
-    .maybeSingle<{ id: string; goal: string | null; distance_km: number | string | null }>();
+    .maybeSingle<{
+      id: string;
+      goal: string | null;
+      distance_km: number | string | null;
+      completed_at: string;
+    }>();
 
   if (readError) {
     console.error("Could not load the completion:", readError.message);
@@ -89,6 +96,11 @@ export async function updateCompletionAction(input: unknown): Promise<Completion
 
   if (!row) {
     return { ok: false, message: "That completion is no longer there." };
+  }
+
+  // The edit window is judged by the day the completion happened, not by now.
+  if (isLocked(istDayKey(new Date(row.completed_at)))) {
+    return { ok: false, message: LOCKED_MESSAGE };
   }
 
   const storedDistance = toNumber(row.distance_km);
@@ -127,6 +139,26 @@ export async function deleteCompletionAction(input: unknown): Promise<Completion
 
   const session = await requireSession();
   if (!session) return { ok: false, message: SIGNED_OUT };
+
+  const { data: row, error: readError } = await session.supabase
+    .from("completions")
+    .select("completed_at")
+    .eq("id", parsed.data.id)
+    .eq("user_id", session.userId)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("Could not load the completion:", readError.message);
+    return { ok: false, message: describeDbError(readError) };
+  }
+
+  if (!row) {
+    return { ok: false, message: "That completion was already removed." };
+  }
+
+  if (isLocked(istDayKey(new Date(row.completed_at as string)))) {
+    return { ok: false, message: LOCKED_MESSAGE };
+  }
 
   const { data, error } = await session.supabase
     .from("completions")

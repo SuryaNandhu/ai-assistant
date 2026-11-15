@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { EDIT_WINDOW_DAYS } from "@/lib/lock";
 import { istDayKey, shiftDayKey } from "@/lib/week";
 
 /**
@@ -26,9 +27,9 @@ export const SCREEN_PROMPT_DAYS = 3;
 
 /**
  * How far back a day can still be edited — the Home card, the chat tool and the
- * /progress day panel all use this one window.
+ * /progress day panel all use this one window, which is the shared edit lock.
  */
-export const SCREEN_TIME_MAX_DAYS_BACK = 30;
+export const SCREEN_TIME_MAX_DAYS_BACK = EDIT_WINDOW_DAYS;
 
 /** How many days the sparkline and the weekly average look at. */
 export const SCREEN_TIME_DAYS = 14;

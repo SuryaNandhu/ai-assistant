@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
+import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import {
   SCREEN_LIMIT_MAX,
   SCREEN_LIMIT_MIN,
-  SCREEN_TIME_MAX_DAYS_BACK,
   SCREEN_TIME_MAX_MINUTES,
 } from "@/lib/screen-time";
 import type { DbSession } from "@/lib/services/session";
@@ -64,11 +64,8 @@ export async function saveScreenTime(
     return { ok: false, message: "That day has not happened yet." };
   }
 
-  if (day < shiftDayKey(todayKey, -SCREEN_TIME_MAX_DAYS_BACK)) {
-    return {
-      ok: false,
-      message: `Screen time can be logged for the last ${SCREEN_TIME_MAX_DAYS_BACK} days.`,
-    };
+  if (isLocked(day, todayKey)) {
+    return { ok: false, message: LOCKED_MESSAGE };
   }
 
   const { error } = await session.supabase.from("screen_time_entries").upsert(

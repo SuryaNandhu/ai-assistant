@@ -1,11 +1,9 @@
 import { describeDbError } from "@/lib/errors";
-import {
-  QUICK_LOG_DEFAULT_DISTANCE_KM,
-  QUICK_LOG_MAX_DAYS_BACK,
-} from "@/lib/quick-log";
+import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
+import { QUICK_LOG_DEFAULT_DISTANCE_KM } from "@/lib/quick-log";
 import type { DbSession } from "@/lib/services/session";
 import { DISTANCE_GOAL } from "@/lib/task";
-import { istDayKey, shiftDayKey } from "@/lib/week";
+import { isDayKey, istDayKey, shiftDayKey } from "@/lib/week";
 
 export type LogActivityInput = {
   /** Goal key from the active targets, or null for "Other". */
@@ -80,13 +78,17 @@ export async function logActivity(
 
   const todayKey = istDayKey(now);
   const day = input.day ?? todayKey;
-  const earliestKey = shiftDayKey(todayKey, -QUICK_LOG_MAX_DAYS_BACK);
 
-  if (day > todayKey || day < earliestKey) {
-    return {
-      ok: false,
-      message: `Pick a date from the last ${QUICK_LOG_MAX_DAYS_BACK} days.`,
-    };
+  if (!isDayKey(day)) {
+    return { ok: false, message: "Use a day like 2026-11-13." };
+  }
+
+  if (day > todayKey) {
+    return { ok: false, message: "That day has not happened yet." };
+  }
+
+  if (isLocked(day, todayKey)) {
+    return { ok: false, message: LOCKED_MESSAGE };
   }
 
   let label = "Other";
@@ -214,7 +216,27 @@ export type UndoLogResult =
 export async function undoLog(
   session: DbSession,
   id: string,
+  now: Date = new Date(),
 ): Promise<UndoLogResult> {
+  const { data: row, error: readError } = await session.supabase
+    .from("completions")
+    .select("completed_at")
+    .eq("id", id)
+    .eq("user_id", session.userId)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("Could not load the quick entry:", readError.message);
+    return { ok: false, message: "Could not undo that log." };
+  }
+
+  if (!row) return { ok: false, message: "That log is already gone." };
+
+  // Deleting is an edit too: an old backdated row stays put.
+  if (isLocked(istDayKey(new Date(row.completed_at as string)), now)) {
+    return { ok: false, message: LOCKED_MESSAGE };
+  }
+
   const { error } = await session.supabase
     .from("completions")
     .delete()

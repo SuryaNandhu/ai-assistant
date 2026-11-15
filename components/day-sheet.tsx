@@ -11,6 +11,7 @@ import {
 import { saveScreenTimeAction } from "@/app/screen-time-actions";
 import { QuickLogSheet } from "@/components/quick-log-sheet";
 import { JOURNAL_MOODS, JOURNAL_NOTE_MAX, moodEmoji } from "@/lib/journal";
+import { EDIT_WINDOW_DAYS, isLocked } from "@/lib/lock";
 import { QUICK_LOG_MAX_DAYS_BACK, type QuickLogTarget } from "@/lib/quick-log";
 import { formatKm, type CompletionEntry, type DayJournal } from "@/lib/report";
 import {
@@ -43,7 +44,13 @@ function feltLabel(felt: CompletionEntry["felt"]): string | null {
  * One completion with its own edit/delete state. Editing is inline so the panel
  * never navigates away from the day.
  */
-function CompletionItem({ entry }: { entry: CompletionEntry }) {
+function CompletionItem({
+  entry,
+  locked,
+}: {
+  entry: CompletionEntry;
+  locked: boolean;
+}) {
   const router = useRouter();
 
   const [draft, setDraft] = useState<EditDraft | null>(null);
@@ -284,7 +291,7 @@ function CompletionItem({ entry }: { entry: CompletionEntry }) {
             </button>
           </div>
         </div>
-      ) : (
+      ) : locked ? null : (
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button type="button" onClick={beginEdit} className={SMALL_BUTTON}>
             Edit
@@ -339,6 +346,9 @@ export function DaySheet({
   onClose,
 }: DaySheetProps) {
   const router = useRouter();
+  // Past the edit window the panel is read-only; the server refuses the same
+  // writes, so hiding the buttons is only the visible half of the rule.
+  const locked = isLocked(dayKey, todayKey);
 
   const [journalEditing, setJournalEditing] = useState(false);
   const [mood, setMood] = useState<number | null>(journal?.mood ?? null);
@@ -365,10 +375,11 @@ export function DaySheet({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, quickLogOpen]);
 
-  const canQuickLog = dayKey >= minDayKey && dayKey <= todayKey;
+  const canQuickLog = !locked && dayKey >= minDayKey && dayKey <= todayKey;
   // Screen time is a completed-day number, so the future is out and the window
   // matches what the server accepts.
   const canEditScreen =
+    !locked &&
     dayKey <= todayKey &&
     dayKey >= shiftDayKey(todayKey, -SCREEN_TIME_MAX_DAYS_BACK);
   const screenOver = isOverLimit(screenMinutes, screenLimit);
@@ -520,6 +531,25 @@ export function DaySheet({
             </p>
           )}
 
+          {locked && (
+            <p className="mb-3 flex items-center gap-2 rounded-xl border border-border bg-muted/60 p-2.5 text-xs text-muted-foreground">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-3.5 w-3.5 shrink-0"
+              >
+                <rect x="4" y="10" width="16" height="10" rx="2" />
+                <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              </svg>
+              Locked after {EDIT_WINDOW_DAYS} days
+            </p>
+          )}
+
           {completions.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
               Nothing logged on this day.
@@ -527,7 +557,7 @@ export function DaySheet({
           ) : (
             <ul className="space-y-2">
               {completions.map((entry) => (
-                <CompletionItem key={entry.id} entry={entry} />
+                <CompletionItem key={entry.id} entry={entry} locked={locked} />
               ))}
             </ul>
           )}
@@ -538,7 +568,7 @@ export function DaySheet({
               <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Journal
               </h3>
-              {!journalEditing && journal && (
+              {!journalEditing && !locked && journal && (
                 <button
                   type="button"
                   onClick={beginJournalEdit}
@@ -618,13 +648,15 @@ export function DaySheet({
                 <p className="text-sm text-muted-foreground">
                   No entry for this day.
                 </p>
-                <button
-                  type="button"
-                  onClick={beginJournalEdit}
-                  className="h-10 shrink-0 rounded-xl border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  Add
-                </button>
+                {!locked && (
+                  <button
+                    type="button"
+                    onClick={beginJournalEdit}
+                    className="h-10 shrink-0 rounded-xl border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    Add
+                  </button>
+                )}
               </div>
             )}
           </section>
@@ -635,7 +667,7 @@ export function DaySheet({
               <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Screen time
               </h3>
-              {!screenEditing && screenMinutes !== null && (
+              {!screenEditing && !locked && screenMinutes !== null && (
                 <button
                   type="button"
                   onClick={beginScreenEdit}
@@ -747,9 +779,11 @@ export function DaySheet({
               Log activity for this day
             </button>
             <p className="mt-2 text-center text-xs text-muted-foreground">
-              {canQuickLog
-                ? `Opens quick log with ${dayKeyLabel(dayKey)} already filled in.`
-                : `Quick log works for the last ${QUICK_LOG_MAX_DAYS_BACK} days.`}
+              {locked
+                ? `Edits stop after ${EDIT_WINDOW_DAYS} days, so this day is read-only.`
+                : canQuickLog
+                  ? `Opens quick log with ${dayKeyLabel(dayKey)} already filled in.`
+                  : `Quick log works for the last ${QUICK_LOG_MAX_DAYS_BACK} days.`}
             </p>
           </div>
 

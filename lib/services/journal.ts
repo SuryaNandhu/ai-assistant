@@ -5,11 +5,9 @@ import {
   toJournalEntry,
   type JournalEntry,
 } from "@/lib/journal";
+import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import type { DbSession } from "@/lib/services/session";
-import { istDayKey, shiftDayKey } from "@/lib/week";
-
-/** How far back a journal entry may be edited (the day panel's window). */
-export const JOURNAL_MAX_DAYS_BACK = 400;
+import { istDayKey } from "@/lib/week";
 
 export type SaveJournalInput = {
   /** 1 (rough) … 5 (great); null/undefined leaves the mood untouched. */
@@ -45,8 +43,8 @@ export async function saveJournalEntry(
     return { ok: false, message: "That day has not happened yet." };
   }
 
-  if (day < shiftDayKey(todayKey, -JOURNAL_MAX_DAYS_BACK)) {
-    return { ok: false, message: "That day is too far back to edit here." };
+  if (isLocked(day, todayKey)) {
+    return { ok: false, message: LOCKED_MESSAGE };
   }
 
   const mood =

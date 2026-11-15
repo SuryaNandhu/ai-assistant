@@ -10,6 +10,7 @@
  * "done" means today.
  */
 
+import { EDIT_WINDOW_DAYS } from "@/lib/lock";
 import { DISTANCE_GOAL } from "@/lib/task";
 import type { GoalProgress, TargetPeriod } from "@/lib/targets";
 
@@ -48,7 +49,7 @@ export const QUICK_LOG_FALLBACK_MINUTES = 30;
 export const QUICK_LOG_DEFAULT_DISTANCE_KM = 5;
 
 /** Quick logs can be backdated this far, but never into the future. */
-export const QUICK_LOG_MAX_DAYS_BACK = 14;
+export const QUICK_LOG_MAX_DAYS_BACK = EDIT_WINDOW_DAYS;
 
 export function defaultMinutes(goal: string | null): number {
   if (!goal) return QUICK_LOG_FALLBACK_MINUTES;
