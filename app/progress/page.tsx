@@ -231,6 +231,23 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
               screenLimit={screenLimit}
             />
           </div>
+
+          <section className="mt-6 rounded-2xl border border-border p-4">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Your data
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              One JSON file with your items, completions, targets, journal,
+              screen time and chat. Five downloads an hour.
+            </p>
+            <a
+              href="/api/export"
+              download
+              className="mt-3 inline-flex h-11 items-center rounded-xl border border-border px-4 text-sm font-semibold underline-offset-2 hover:bg-muted"
+            >
+              Export my data
+            </a>
+          </section>
         </div>
 
       </div>
