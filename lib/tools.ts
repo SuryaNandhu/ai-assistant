@@ -282,7 +282,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     get_status: tool({
       description:
-        "Read a numbers-only snapshot: current streak, progress per target in its own period (weekly or monthly, with the daily minimum where one exists), today's completion count and which completed days (from the first day screen time was logged) are missing screen time. It never returns journal text.",
+        "Read a numbers-only snapshot: current streak, progress per target in its own period (weekly or monthly, with the daily minimum where one exists), today's completion count, which completed days (from the first day screen time was logged) are missing screen time, and which recent days have no journal entry. It never returns journal text.",
       inputSchema: z.object({}),
       execute: async () => {
         const status = await loadStatus(session, now);
@@ -293,9 +293,15 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
             ? "screen time up to date"
             : `screen time missing for ${missing} ${missing === 1 ? "day" : "days"}`;
 
+        const journalMissing = status.journalMissingDays.length;
+        const journalLine =
+          journalMissing === 0
+            ? "journal up to date"
+            : `journal missing for ${journalMissing} ${journalMissing === 1 ? "day" : "days"}`;
+
         return {
           ok: true,
-          message: `Streak ${status.streakDays} days · ${status.todayCompletions} logged today · ${screenLine}.`,
+          message: `Streak ${status.streakDays} days · ${status.todayCompletions} logged today · ${screenLine} · ${journalLine}.`,
           ...status,
         };
       },

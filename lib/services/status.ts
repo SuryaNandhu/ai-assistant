@@ -1,3 +1,4 @@
+import { loadJournalBacklog, type JournalBacklog } from "@/lib/journal";
 import { loadWeeklyProgress } from "@/lib/progress";
 import {
   loadScreenTimeTracking,
@@ -31,6 +32,8 @@ export type StatusSummary = {
   screenTrackingStart: string | null;
   /** Completed days since tracking began with no screen time, oldest first. */
   missingScreenDays: string[];
+  /** Days since the journal began with no entry, newest first (keys only). */
+  journalMissingDays: string[];
 };
 
 /**
@@ -45,7 +48,7 @@ export async function loadStatus(
   const todayKey = istDayKey(now);
   const tomorrowKey = shiftDayKey(todayKey, 1);
 
-  const [progress, streak, todayCount, tracking] = await Promise.all([
+  const [progress, streak, todayCount, tracking, journal] = await Promise.all([
     loadWeeklyProgress(session.supabase, session.userId, now),
     loadStreak(session.supabase, session.userId, now),
     session.supabase
@@ -60,7 +63,14 @@ export async function loadStatus(
         return { start: null, missing: [] } satisfies ScreenTimeTracking;
       },
     ),
+    loadJournalBacklog(session.supabase, session.userId, now).catch(
+      (error: unknown) => {
+        console.error("Could not load missing journal days:", error);
+        return { start: null, missing: [] } satisfies JournalBacklog;
+      },
+    ),
   ]);
+
 
   if (todayCount.error) {
     console.error("Could not count today's completions:", todayCount.error.message);
@@ -82,5 +92,7 @@ export async function loadStatus(
     })),
     screenTrackingStart: tracking.start,
     missingScreenDays: tracking.missing,
+    journalMissingDays: journal.missing,
   };
 }
+

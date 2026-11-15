@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { HomeBoard } from "@/components/home-board";
 import { HomeHeader } from "@/components/home-header";
+import { JournalBacklogCard } from "@/components/journal-backlog-card";
 import { JournalCard } from "@/components/journal-card";
 import { ProjectCard } from "@/components/project-card";
 import { QuickSaveButton } from "@/components/quick-save";
@@ -14,7 +15,9 @@ import { currentMonth } from "@/lib/calendar";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import {
   isJournalPromptTime,
+  loadJournalBacklog,
   loadJournalEntry,
+  type JournalBacklog,
   type JournalEntry,
 } from "@/lib/journal";
 import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
@@ -71,12 +74,16 @@ export default async function HomePage() {
     statsError = errorMessage(error);
   }
 
-  // A missing journal table should only hide the card, never break Home.
+  // A missing journal table should only hide the cards, never break Home.
   let journalEntry: JournalEntry | null = null;
+  let journalBacklog: JournalBacklog = { start: null, missing: [] };
   try {
-    journalEntry = await loadJournalEntry(supabase, user.id, todayKey);
+    [journalEntry, journalBacklog] = await Promise.all([
+      loadJournalEntry(supabase, user.id, todayKey),
+      loadJournalBacklog(supabase, user.id, now),
+    ]);
   } catch (error) {
-    console.error("Could not load today's journal entry:", error);
+    console.error("Could not load the journal:", error);
   }
 
   // Screen time is asked for one completed day at a time; a missing table just
@@ -116,6 +123,10 @@ export default async function HomePage() {
         <JournalCard
           entry={journalEntry}
           showPrompt={isJournalPromptTime(now)}
+        />
+        <JournalBacklogCard
+          days={journalBacklog.missing}
+          todayKey={todayKey}
         />
       </div>
       <QuickSaveButton />

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
@@ -118,13 +119,22 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <AppHeader email={user.email} />
         <div className="mx-auto w-full max-w-md px-4 pt-4 pb-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Progress</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {progress
-                ? `This week · ${istWeekLabel(progress.weekStart, progress.weekEnd)}`
-                : "Streaks, weekly rings and the month at a glance."}
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight">Progress</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {progress
+                  ? `This week · ${istWeekLabel(progress.weekStart, progress.weekEnd)}`
+                  : "Streaks, weekly rings and the month at a glance."}
+              </p>
+            </div>
+            {/* Home hides its journal card once the day is written. */}
+            <Link
+              href="/journal"
+              className="shrink-0 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Journal
+            </Link>
           </div>
 
           {statsError && (

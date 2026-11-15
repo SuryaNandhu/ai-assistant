@@ -65,6 +65,12 @@ export function JournalCard({ entry, showPrompt }: JournalCardProps) {
     setEditing(true);
   }
 
+  /**
+   * Once today's mood is saved the card has done its job: Home stays short and
+   * /journal keeps the history (and edits) for later.
+   */
+  if (current?.mood != null) return null;
+
   return (
     <section className="mx-auto w-full max-w-md px-4 pb-6">
       <div className="rounded-2xl border border-border bg-background p-4">

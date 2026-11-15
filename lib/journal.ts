@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { istDayKey, istParts } from "@/lib/week";
+import { istDayKey, istParts, shiftDayKey } from "@/lib/week";
 
 export type JournalMood = 1 | 2 | 3 | 4 | 5;
 
@@ -22,6 +22,12 @@ export const JOURNAL_MOODS = [
 ] as const satisfies readonly { value: JournalMood; emoji: string; label: string }[];
 
 export const JOURNAL_NOTE_MAX = 200;
+
+/**
+ * How many missed days the backlog card asks about. Three is enough to close a
+ * gap without turning the journal into homework; older days stay on /progress.
+ */
+export const JOURNAL_BACKLOG_DAYS = 3;
 
 /** From 7 pm IST the day is winding down, so Home asks how it went. */
 export const JOURNAL_PROMPT_HOUR = 19;
@@ -90,4 +96,87 @@ export async function loadJournalEntries(
   }
 
   return ((data ?? []) as JournalRow[]).map(toJournalEntry);
+}
+
+export type JournalBacklog = {
+  /** First day with a mood, or null when the journal was never written. */
+  start: string | null;
+  /** Missed days since then, newest first, at most `JOURNAL_BACKLOG_DAYS`. */
+  missing: string[];
+};
+
+/**
+ * Days with no entry that are worth asking about. The journal only asks about
+ * days after the first mood was written, so a new user never gets asked about
+ * the weeks before they started, and today is never asked about here.
+ */
+export function missingJournalDays(
+  logged: Iterable<string>,
+  now: Date = new Date(),
+  start: string | null = null,
+): string[] {
+  if (start === null) return [];
+
+  const todayKey = istDayKey(now);
+  const days = new Set(logged);
+  const missing: string[] = [];
+
+  // Newest first: yesterday is the day the user can still remember.
+  for (let offset = 1; offset <= JOURNAL_BACKLOG_DAYS; offset += 1) {
+    const dayKey = shiftDayKey(todayKey, -offset);
+    if (dayKey < start) continue;
+    if (!days.has(dayKey)) missing.push(dayKey);
+  }
+
+  return missing;
+}
+
+/**
+ * First mood plus the days still missing after it, in two small reads. A
+ * missing table throws, so Home can hide the card instead of breaking.
+ */
+export async function loadJournalBacklog(
+  supabase: SupabaseClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<JournalBacklog> {
+  const todayKey = istDayKey(now);
+  const windowStartKey = shiftDayKey(todayKey, -JOURNAL_BACKLOG_DAYS);
+
+  const first = await supabase
+    .from("journal_entries")
+    .select("day")
+    .eq("user_id", userId)
+    .not("mood", "is", null)
+    .order("day", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (first.error) {
+    throw new Error(`Could not load your journal: ${first.error.message}`);
+  }
+
+  const start = first.data?.day ? String(first.data.day).slice(0, 10) : null;
+  if (start === null) return { start: null, missing: [] };
+
+  const fromKey = start > windowStartKey ? start : windowStartKey;
+
+  const { data, error } = await supabase
+    .from("journal_entries")
+    .select("day")
+    .eq("user_id", userId)
+    .gte("day", fromKey)
+    .lt("day", todayKey);
+
+  if (error) {
+    throw new Error(`Could not load your journal: ${error.message}`);
+  }
+
+  const logged = new Set(
+    ((data ?? []) as { day: string }[]).map((row) =>
+      String(row.day).slice(0, 10),
+    ),
+  );
+
+  return { start, missing: missingJournalDays(logged, now, start) };
 }
