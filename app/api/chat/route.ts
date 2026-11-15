@@ -1,5 +1,6 @@
 import {
   convertToModelMessages,
+  stepCountIs,
   streamText,
   validateUIMessages,
   type LanguageModel,
@@ -12,10 +13,14 @@ import { getModel } from "@/lib/llm";
 import { loadRecentMessages, messageText } from "@/lib/messages";
 import { SYSTEM_PROMPT } from "@/lib/prompt";
 import { createClient } from "@/lib/supabase/server";
+import { chatTools } from "@/lib/tools";
 
 export const maxDuration = 60;
 
 const DEFAULT_DAILY_MESSAGE_CAP = 100;
+
+/** The model may chain a read, a write and a reply; five steps is plenty. */
+const MAX_STEPS = 5;
 
 /**
  * Errors are returned as plain text so `useChat` shows the exact message in the
@@ -124,15 +129,41 @@ export async function POST(request: Request) {
     return textError(errorMessage(error), 500);
   }
 
+  // Assistant text is assembled across steps: a step may end on a tool call
+  // with no prose, and the final step carries the answer.
+  const replyParts: string[] = [];
+
   const result = streamText({
     model,
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(context),
+    tools: chatTools({ supabase, userId }),
+    stopWhen: stepCountIs(MAX_STEPS),
     onError: ({ error }) => {
       console.error("LLM stream error:", error);
     },
-    onEnd: async ({ text }) => {
-      const content = text.trim();
+    onStepEnd: async (step) => {
+      const text = step.text.trim();
+      if (text) replyParts.push(text);
+
+      if (step.toolCalls.length === 0) return;
+
+      // Audit trail: one row per call, with the result the model saw.
+      const rows = step.toolCalls.map((call, index) => ({
+        user_id: userId,
+        tool: call.toolName,
+        input: call.input ?? null,
+        output: step.toolResults[index]?.output ?? null,
+      }));
+
+      const { error } = await supabase.from("tool_calls").insert(rows);
+
+      if (error) {
+        console.error("Could not log the tool calls:", error.message);
+      }
+    },
+    onEnd: async () => {
+      const content = replyParts.join("\n\n").trim();
       if (!content) return;
 
       const { error } = await supabase

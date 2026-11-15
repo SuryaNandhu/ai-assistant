@@ -12,6 +12,62 @@ import {
 
 import { messageText } from "@/lib/messages";
 
+type ToolChipData = {
+  label: string;
+  tone: "ok" | "error" | "pending";
+};
+
+/**
+ * Turns the tool parts of an assistant message into small chips. The model says
+ * what happened in its own words; the chip is the receipt from the tool itself.
+ */
+function readToolChips(parts: UIMessage["parts"]): ToolChipData[] {
+  const chips: ToolChipData[] = [];
+
+  for (const part of parts) {
+    if (!part.type.startsWith("tool-")) continue;
+
+    const call = part as unknown as { state?: string; output?: unknown };
+
+    if (call.state === "output-available") {
+      const output = call.output as { ok?: boolean; message?: unknown } | null;
+      chips.push({
+        label:
+          typeof output?.message === "string" ? output.message : "Done.",
+        tone: output?.ok === false ? "error" : "ok",
+      });
+      continue;
+    }
+
+    if (call.state === "output-error") {
+      chips.push({ label: "That action failed.", tone: "error" });
+      continue;
+    }
+
+    chips.push({ label: "Working…", tone: "pending" });
+  }
+
+  return chips;
+}
+
+function ToolChip({ label, tone }: ToolChipData) {
+  return (
+    <span
+      className={[
+        "inline-flex max-w-full items-start gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs leading-relaxed",
+        tone === "error"
+          ? "border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          : tone === "pending"
+            ? "border-dashed border-border bg-background text-muted-foreground"
+            : "border-border bg-background text-muted-foreground",
+      ].join(" ")}
+    >
+      <span aria-hidden="true">{tone === "error" ? "!" : "✓"}</span>
+      <span className="min-w-0 break-words">{label}</span>
+    </span>
+  );
+}
+
 type ChatProps = {
   initialMessages: UIMessage[];
   historyError?: string | null;
@@ -87,7 +143,10 @@ export function Chat({ initialMessages, historyError }: ChatProps) {
 
           {messages.map((message) => {
             const text = messageText(message);
-            if (!text) return null;
+            const chips =
+              message.role === "assistant" ? readToolChips(message.parts) : [];
+
+            if (!text && chips.length === 0) return null;
 
             const isUser = message.role === "user";
             return (
@@ -95,15 +154,27 @@ export function Chat({ initialMessages, historyError }: ChatProps) {
                 key={message.id}
                 className={isUser ? "flex justify-end" : "flex justify-start"}
               >
-                <div
-                  className={[
-                    "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed sm:max-w-[75%]",
-                    isUser
-                      ? "rounded-br-md bg-accent text-accent-foreground"
-                      : "rounded-bl-md border border-border bg-muted",
-                  ].join(" ")}
-                >
-                  {text}
+                <div className="flex max-w-[85%] flex-col items-start gap-1.5 sm:max-w-[75%]">
+                  {text && (
+                    <div
+                      className={[
+                        "max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
+                        isUser
+                          ? "rounded-br-md bg-accent text-accent-foreground"
+                          : "rounded-bl-md border border-border bg-muted",
+                      ].join(" ")}
+                    >
+                      {text}
+                    </div>
+                  )}
+
+                  {chips.map((chip, index) => (
+                    <ToolChip
+                      key={`${message.id}-tool-${index}`}
+                      label={chip.label}
+                      tone={chip.tone}
+                    />
+                  ))}
                 </div>
               </div>
             );
