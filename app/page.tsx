@@ -6,6 +6,7 @@ import { HomeBoard } from "@/components/home-board";
 import { HomeHeader } from "@/components/home-header";
 import { JournalBacklogCard } from "@/components/journal-backlog-card";
 import { JournalCard } from "@/components/journal-card";
+import { LastWeekCard } from "@/components/last-week-card";
 import { ProjectCard } from "@/components/project-card";
 import { QuickSaveButton } from "@/components/quick-save";
 import { ScreenTimePrompt } from "@/components/screen-time-prompt";
@@ -36,10 +37,11 @@ import {
   loadRestDayState,
   type RestDayState,
 } from "@/lib/services/rest-day";
+import { loadWeeklySummary, type WeekSummary } from "@/lib/services/weekly";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import type { GoalCard } from "@/lib/targets";
-import { istDayKey, shiftDayKey } from "@/lib/week";
+import { istDayKey, istParts, shiftDayKey } from "@/lib/week";
 
 // Auth-gated page: always evaluate the session at request time.
 export const dynamic = "force-dynamic";
@@ -100,6 +102,23 @@ export default async function HomePage() {
     console.error("Could not load the rest day:", error);
   }
 
+  // Monday and Tuesday: the week that just ended is still fresh news, so Home
+  // shows one line about it. A failure here only hides the card.
+  let lastWeek: WeekSummary | null = null;
+  const { weekday } = istParts(now);
+  if (weekday === 1 || weekday === 2) {
+    try {
+      const weeks = await loadWeeklySummary(
+        { supabase, userId: user.id },
+        now,
+        2,
+      );
+      lastWeek = weeks.find((week) => !week.isCurrent) ?? null;
+    } catch (error) {
+      console.error("Could not load last week's summary:", error);
+    }
+  }
+
   // Screen time is asked for one completed day at a time; a missing table just
   // hides the card instead of breaking Home.
   let missingScreenDays: string[] = [];
@@ -137,6 +156,7 @@ export default async function HomePage() {
           restDay={restDay}
           error={statsError}
         />
+        {lastWeek && <LastWeekCard week={lastWeek} />}
         <HomeBoard
           targets={quickLogTargets(progress?.goals ?? [])}
           todayKey={todayKey}

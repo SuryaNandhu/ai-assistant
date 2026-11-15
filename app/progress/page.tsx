@@ -129,12 +129,20 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
               </p>
             </div>
             {/* Home hides its journal card once the day is written. */}
-            <Link
-              href="/journal"
-              className="shrink-0 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              Journal
-            </Link>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <Link
+                href="/journal"
+                className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Journal
+              </Link>
+              <Link
+                href="/progress/weeks"
+                className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Weeks
+              </Link>
+            </div>
           </div>
 
           {statsError && (
