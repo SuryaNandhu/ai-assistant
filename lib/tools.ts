@@ -171,22 +171,32 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     log_screen_time: tool({
       description:
-        "Record how many minutes the user spent on their phone or laptop screen on a day.",
+        "Record how many minutes the user spent on screens during a finished day. Leave out the day for yesterday: screen time covers a whole day, and today is only used when the user says so explicitly.",
       inputSchema: z.object({
         minutes: z.number().int().min(0).max(1440),
-        day: DAY_KEY.optional(),
+        day: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional()
+          .describe(
+            "IST day key, YYYY-MM-DD. Leave out for yesterday; pass it only when the user names another day.",
+          ),
       }),
       execute: async (input) => {
-        const result = await saveScreenTime(session, {
-          minutes: input.minutes,
-          day: input.day,
-        });
+        const result = await saveScreenTime(
+          session,
+          {
+            minutes: input.minutes,
+            day: input.day,
+          },
+          now,
+        );
 
         if (!result.ok) return failure(result.message);
 
         return {
           ok: true,
-          message: `Saved ${formatMinutes(result.minutes)} of screen time for ${result.day}.`,
+          message: `Saved ${formatMinutes(result.minutes)} of screen time for ${dayKeyLabel(result.day)}.`,
           day: result.day,
           minutes: result.minutes,
         };

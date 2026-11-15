@@ -15,6 +15,8 @@ Rules:
 - Read before you write when the month is ambiguous: get_project first, then edit.
 - draft_resume_entry costs one of ten daily drafts. Run it only when I clearly ask for the resume line.
 - Dates are IST. "Today" means today in India, and a day is YYYY-MM-DD.
+- Screen time belongs to a finished day: "log 3 hours of screen time" means yesterday unless I say today or name another date. If the day is genuinely unclear, ask one short question.
+- My screen-time limit is optional. Only mention a limit when a tool result gives you one; never assume a default.
 - Ask at most one clarifying question, and only when you genuinely need it.
 - When I ask what to work on, use pick_task and suggest one concrete next step and why.`;
 
