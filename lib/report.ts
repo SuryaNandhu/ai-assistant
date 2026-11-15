@@ -33,6 +33,8 @@ export type MonthDay = {
   journal: DayJournal | null;
   /** Minutes on screens that day, null when it was not logged. */
   screenMinutes: number | null;
+  /** That day was taken as the week's rest day. */
+  restDay: boolean;
 };
 
 export type MonthTotals = {
@@ -112,28 +114,37 @@ export async function loadMonthActivity(
 ): Promise<MonthActivity> {
   const { startDayKey, endDayKey, startIso, endIso } = monthRange(ref);
 
-  const [completionResult, journalResult, screenResult] = await Promise.all([
-    supabase
-      .from("completions")
-      .select(COMPLETION_COLUMNS)
-      .eq("user_id", userId)
-      .gte("completed_at", startIso)
-      .lt("completed_at", endIso)
-      .order("completed_at", { ascending: true })
-      .limit(1000),
-    supabase
-      .from("journal_entries")
-      .select("day, mood, note")
-      .eq("user_id", userId)
-      .gte("day", startDayKey)
-      .lte("day", endDayKey),
-    supabase
-      .from("screen_time_entries")
-      .select("day, minutes")
-      .eq("user_id", userId)
-      .gte("day", startDayKey)
-      .lte("day", endDayKey),
-  ]);
+  const [completionResult, journalResult, screenResult, restResult] =
+    await Promise.all([
+      supabase
+        .from("completions")
+        .select(COMPLETION_COLUMNS)
+        .eq("user_id", userId)
+        .gte("completed_at", startIso)
+        .lt("completed_at", endIso)
+        .order("completed_at", { ascending: true })
+        .limit(1000),
+      supabase
+        .from("journal_entries")
+        .select("day, mood, note")
+        .eq("user_id", userId)
+        .gte("day", startDayKey)
+        .lte("day", endDayKey),
+      supabase
+        .from("screen_time_entries")
+        .select("day, minutes")
+        .eq("user_id", userId)
+        .gte("day", startDayKey)
+        .lte("day", endDayKey),
+      // Kept separate so a database without 008 still shows moods and screen time.
+      supabase
+        .from("journal_entries")
+        .select("day")
+        .eq("user_id", userId)
+        .eq("is_rest_day", true)
+        .gte("day", startDayKey)
+        .lte("day", endDayKey),
+    ]);
 
   if (completionResult.error) {
     throw new Error(
@@ -181,6 +192,7 @@ export async function loadMonthActivity(
       completions: [],
       journal: null,
       screenMinutes: null,
+      restDay: false,
     };
     day.completions.push(entry);
     days.set(dayKey, day);
@@ -198,6 +210,7 @@ export async function loadMonthActivity(
       completions: [],
       journal: null,
       screenMinutes: null,
+      restDay: false,
     };
     day.journal = { mood: toNumber(row.mood), note: row.note ?? null };
     days.set(dayKey, day);
@@ -213,8 +226,30 @@ export async function loadMonthActivity(
       completions: [],
       journal: null,
       screenMinutes: null,
+      restDay: false,
     };
     day.screenMinutes = minutes;
+    days.set(dayKey, day);
+  }
+
+  // Rest days are optional: a missing `is_rest_day` column just means none.
+  if (restResult.error) {
+    console.error(
+      "Could not load this month's rest days:",
+      restResult.error.message,
+    );
+  }
+
+  for (const row of (restResult.data ?? []) as { day: string }[]) {
+    const dayKey = String(row.day).slice(0, 10);
+    const day = days.get(dayKey) ?? {
+      dayKey,
+      completions: [],
+      journal: null,
+      screenMinutes: null,
+      restDay: false,
+    };
+    day.restDay = true;
     days.set(dayKey, day);
   }
 

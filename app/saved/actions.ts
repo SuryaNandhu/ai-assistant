@@ -13,8 +13,10 @@ import {
   normalizeTags,
   type InboxItem,
 } from "@/lib/inbox";
+import { clearRestDayForCompletion } from "@/lib/services/rest-day";
 import { createClient } from "@/lib/supabase/server";
 import { DEFAULT_MINUTES } from "@/lib/task";
+import { istDayKey } from "@/lib/week";
 
 type Session = {
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -172,6 +174,9 @@ export async function markItemReadAction(input: unknown): Promise<ItemResult> {
     if (logError) {
       // The status is saved; only this week's progress misses the item.
       console.error("Could not log the completion:", logError.message);
+    } else {
+      // The item counts as work, so today is no longer a rest day.
+      await clearRestDayForCompletion(session, istDayKey(new Date()));
     }
   }
 

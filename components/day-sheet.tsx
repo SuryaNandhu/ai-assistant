@@ -8,6 +8,7 @@ import {
   deleteCompletionAction,
   updateCompletionAction,
 } from "@/app/progress/actions";
+import { undoRestDayAction } from "@/app/rest-day-actions";
 import { saveScreenTimeAction } from "@/app/screen-time-actions";
 import { QuickLogSheet } from "@/components/quick-log-sheet";
 import { JOURNAL_MOODS, JOURNAL_NOTE_MAX, moodEmoji } from "@/lib/journal";
@@ -322,6 +323,8 @@ type DaySheetProps = {
   screenMinutes: number | null;
   /** The user's daily limit, from `user_settings`; null when not set. */
   screenLimit: number | null;
+  /** This day was taken as the week's rest day. */
+  restDay: boolean;
   todayKey: string;
   /** Earliest day a quick log may use. */
   minDayKey: string;
@@ -340,6 +343,7 @@ export function DaySheet({
   journal,
   screenMinutes,
   screenLimit,
+  restDay,
   todayKey,
   minDayKey,
   targets,
@@ -365,6 +369,7 @@ export function DaySheet({
 
   const [savingJournal, startSavingJournal] = useTransition();
   const [savingScreen, startSavingScreen] = useTransition();
+  const [undoingRest, startUndoRest] = useTransition();
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -419,6 +424,25 @@ export function DaySheet({
 
       setJournalEditing(false);
       setNotice("Journal saved.");
+      router.refresh();
+    });
+  }
+
+  function undoRestDay() {
+    if (undoingRest) return;
+
+    setError(null);
+    setNotice(null);
+
+    startUndoRest(async () => {
+      const result = await undoRestDayAction({ day: dayKey });
+
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+
+      setNotice(result.message);
       router.refresh();
     });
   }
@@ -529,6 +553,22 @@ export function DaySheet({
             >
               {notice}
             </p>
+          )}
+
+          {restDay && (
+            <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/60 p-2.5 text-xs">
+              <span>😴 Rest day — the streak held.</span>
+              {!locked && (
+                <button
+                  type="button"
+                  onClick={undoRestDay}
+                  disabled={undoingRest}
+                  className="shrink-0 rounded-lg border border-border px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:opacity-50"
+                >
+                  {undoingRest ? "Undoing…" : "Undo"}
+                </button>
+              )}
+            </div>
           )}
 
           {locked && (

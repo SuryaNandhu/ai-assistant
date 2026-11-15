@@ -165,6 +165,7 @@ export async function loadJournalBacklog(
     .from("journal_entries")
     .select("day")
     .eq("user_id", userId)
+    .not("mood", "is", null)
     .gte("day", fromKey)
     .lt("day", todayKey);
 
@@ -172,6 +173,8 @@ export async function loadJournalBacklog(
     throw new Error(`Could not load your journal: ${error.message}`);
   }
 
+  // Only a mood counts as saved: a rest-day row (mood left empty) still leaves
+  // the day waiting for a rating.
   const logged = new Set(
     ((data ?? []) as { day: string }[]).map((row) =>
       String(row.day).slice(0, 10),

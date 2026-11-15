@@ -3,6 +3,7 @@ import {
   type PickRequest,
 } from "@/lib/pick-service";
 import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
+import { clearRestDayForCompletion } from "@/lib/services/rest-day";
 import type { DbSession } from "@/lib/services/session";
 import {
   effectiveOutcome,
@@ -241,6 +242,9 @@ export async function completePickedTask(
       };
     }
 
+    const today = istDayKey(new Date());
+    await clearRestDayForCompletion(session, today);
+
     await finishSuggestion(session, task.suggestionId, {
       outcome: "done",
       felt: toSuggestionFelt(felt),
@@ -302,6 +306,9 @@ export async function completePickedTask(
       message: "Could not save that completion. Please try again.",
     };
   }
+
+  const today = istDayKey(new Date());
+  await clearRestDayForCompletion(session, today);
 
   await finishSuggestion(session, task.suggestionId, {
     outcome: "done",

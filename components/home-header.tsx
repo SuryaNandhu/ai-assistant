@@ -1,15 +1,19 @@
+import { RestDayButton } from "@/components/rest-day-button";
 import { targetHint, type GoalProgress, type WeeklyProgress } from "@/lib/progress";
+import type { RestDayState } from "@/lib/services/rest-day";
 import type { Streak } from "@/lib/streak";
 import { istWeekLabel } from "@/lib/week";
 
 type HomeHeaderProps = {
   progress: WeeklyProgress | null;
   streak: Streak | null;
+  /** Null when the rest-day reads failed; the button is then left out. */
+  restDay: RestDayState | null;
   error: string | null;
 };
 
 /** Streak badge plus this week's target pills. */
-export function HomeHeader({ progress, streak, error }: HomeHeaderProps) {
+export function HomeHeader({ progress, streak, restDay, error }: HomeHeaderProps) {
   return (
     <header className="border-b border-border px-4 pb-4 pt-4">
       <div className="mx-auto w-full max-w-md">
@@ -24,6 +28,8 @@ export function HomeHeader({ progress, streak, error }: HomeHeaderProps) {
           </div>
           <StreakBadge streak={streak} />
         </div>
+
+        {restDay && <RestDayButton state={restDay} />}
 
         {error && (
           <p

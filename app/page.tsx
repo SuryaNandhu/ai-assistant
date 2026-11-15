@@ -32,6 +32,10 @@ import {
 } from "@/lib/quick-log";
 import { loadMissingScreenDays } from "@/lib/screen-time";
 import { loadGoalCards } from "@/lib/services/quick-add";
+import {
+  loadRestDayState,
+  type RestDayState,
+} from "@/lib/services/rest-day";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import type { GoalCard } from "@/lib/targets";
@@ -88,6 +92,14 @@ export default async function HomePage() {
     console.error("Could not load the journal:", error);
   }
 
+  // The weekly rest day: a missing 008 column only hides the button's actions.
+  let restDay: RestDayState | null = null;
+  try {
+    restDay = await loadRestDayState({ supabase, userId: user.id }, now);
+  } catch (error) {
+    console.error("Could not load the rest day:", error);
+  }
+
   // Screen time is asked for one completed day at a time; a missing table just
   // hides the card instead of breaking Home.
   let missingScreenDays: string[] = [];
@@ -119,7 +131,12 @@ export default async function HomePage() {
     <main className="flex h-dvh flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <AppHeader email={user.email} />
-        <HomeHeader progress={progress} streak={streak} error={statsError} />
+        <HomeHeader
+          progress={progress}
+          streak={streak}
+          restDay={restDay}
+          error={statsError}
+        />
         <HomeBoard
           targets={quickLogTargets(progress?.goals ?? [])}
           todayKey={todayKey}

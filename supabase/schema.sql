@@ -243,7 +243,8 @@ create index if not exists suggestions_user_outcome_idx
   on public.suggestions (user_id, outcome, shown_at desc);
 
 -- ---------------------------------------------------------------------------
--- journal_entries: one mood + one line per IST day, editable that day.
+-- journal_entries: one mood + one line per IST day, editable inside the 7-day
+-- window. `is_rest_day` marks the one weekly rest day, which holds the streak.
 -- Private to the app UI; the text is never sent to the LLM.
 -- ---------------------------------------------------------------------------
 create table if not exists public.journal_entries (
@@ -256,6 +257,7 @@ create table if not exists public.journal_entries (
   note text
     constraint journal_entries_note_check
     check (note is null or char_length(note) <= 200),
+  is_rest_day boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, day)

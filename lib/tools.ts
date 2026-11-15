@@ -27,6 +27,7 @@ import {
   formatMinutes,
 } from "@/lib/screen-time";
 import { saveJournalEntry } from "@/lib/services/journal";
+import { setRestDay } from "@/lib/services/rest-day";
 import { loadStatus } from "@/lib/services/status";
 import { logActivity } from "@/lib/services/log";
 import {
@@ -48,7 +49,7 @@ import {
 import { SKIP_REASON_VALUES } from "@/lib/suggestions";
 import { GOAL_LABEL_MAX } from "@/lib/targets";
 import { ENERGY_LEVELS, type Felt } from "@/lib/task";
-import { dayKeyLabel, istDayKey } from "@/lib/week";
+import { dayKeyLabel, istDayKey, shiftDayKey } from "@/lib/week";
 
 /**
  * The assistant's tools. Each one is a thin wrapper over `lib/services/*`, the
@@ -285,7 +286,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     get_status: tool({
       description:
-        "Read a numbers-only snapshot: current streak, progress per target in its own period (weekly or monthly, with the daily minimum where one exists), today's completion count, which completed days (from the first day screen time was logged) are missing screen time, and which recent days have no journal entry. It never returns journal text.",
+        "Read a numbers-only snapshot: current streak, progress per target in its own period (weekly or monthly, with the daily minimum where one exists), today's completion count, whether this week's rest day is still free, which completed days (from the first day screen time was logged) are missing screen time, and which recent days have no journal entry. It never returns journal text.",
       inputSchema: z.object({}),
       execute: async () => {
         const status = await loadStatus(session, now);
@@ -302,9 +303,15 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
             ? "journal up to date"
             : `journal missing for ${journalMissing} ${journalMissing === 1 ? "day" : "days"}`;
 
+        const restLine = status.restDayAvailable
+          ? `rest day still free (${status.restDayAvailable})`
+          : status.restDayUsed
+            ? `rest day taken on ${status.restDayUsed}`
+            : `no rest day this week: ${status.restDayBlockedReason ?? "unavailable"}`;
+
         return {
           ok: true,
-          message: `Streak ${status.streakDays} days · ${status.todayCompletions} logged today · ${screenLine} · ${journalLine}.`,
+          message: `Streak ${status.streakDays} days · ${status.todayCompletions} logged today · ${restLine} · ${screenLine} · ${journalLine}.`,
           ...status,
         };
       },
@@ -397,6 +404,28 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           message: `Daily screen-time limit is now ${formatMinutes(result.limitMinutes)}.`,
           minutes: result.limitMinutes,
         };
+      },
+    }),
+
+    use_rest_day: tool({
+      description:
+        "Mark today or yesterday as this week's rest day, so the streak holds without logging work. Only when the user asks for it: one rest day per Monday–Sunday week, refused if the week's rest day is already used or the day is past the 7-day edit window.",
+      inputSchema: z.object({
+        day: z
+          .enum(["today", "yesterday"])
+          .optional()
+          .describe("Which day to rest; defaults to today."),
+      }),
+      execute: async (input) => {
+        const todayKey = istDayKey(now);
+        const day =
+          input.day === "yesterday" ? shiftDayKey(todayKey, -1) : todayKey;
+
+        const result = await setRestDay(session, { day }, now);
+
+        if (!result.ok) return failure(result.message);
+
+        return { ok: true, message: result.message, day: result.day };
       },
     }),
 

@@ -153,6 +153,7 @@ export function MonthCalendar({
           const count = day?.completions.length ?? 0;
           const isToday = cell.dayKey === todayKey;
           const mood = day?.journal?.mood;
+          const restDay = day?.restDay ?? false;
 
           return (
             <button
@@ -162,7 +163,7 @@ export function MonthCalendar({
               aria-current={isToday ? "date" : undefined}
               aria-label={`${dayKeyLabel(cell.dayKey)}: ${count} ${
                 count === 1 ? "completion" : "completions"
-              }${mood ? ", journal written" : ""}`}
+              }${mood ? ", journal written" : ""}${restDay ? ", rest day" : ""}`}
               className={[
                 "relative flex h-12 flex-col items-center justify-center rounded-lg border transition-colors",
                 SHADES[intensityFor(count)],
@@ -172,6 +173,14 @@ export function MonthCalendar({
                 count > 0 ? "font-semibold" : "font-normal",
               ].join(" ")}
             >
+              {restDay && (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-0.5 top-0.5 text-[9px] leading-none"
+                >
+                  😴
+                </span>
+              )}
               <span className="text-sm leading-none tabular-nums">
                 {cell.day}
               </span>
@@ -210,6 +219,7 @@ export function MonthCalendar({
           journal={selectedDay?.journal ?? null}
           screenMinutes={selectedDay?.screenMinutes ?? null}
           screenLimit={screenLimit}
+          restDay={selectedDay?.restDay ?? false}
           todayKey={todayKey}
           minDayKey={minDayKey}
           targets={targets}

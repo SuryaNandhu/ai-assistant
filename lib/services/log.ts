@@ -1,6 +1,7 @@
 import { describeDbError } from "@/lib/errors";
 import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import { QUICK_LOG_DEFAULT_DISTANCE_KM } from "@/lib/quick-log";
+import { clearRestDayForCompletion } from "@/lib/services/rest-day";
 import type { DbSession } from "@/lib/services/session";
 import { DISTANCE_GOAL } from "@/lib/task";
 import { isDayKey, istDayKey, shiftDayKey } from "@/lib/week";
@@ -155,6 +156,9 @@ export async function logActivity(
       message: "Could not save that log. Please try again.",
     };
   }
+
+  // A completion on a rest day means the day was not a rest day after all.
+  await clearRestDayForCompletion(session, day, now);
 
   const counts =
     !isWalk || minDistanceKm === null || (distance ?? 0) >= minDistanceKm;
