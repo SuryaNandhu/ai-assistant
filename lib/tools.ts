@@ -19,11 +19,14 @@ import {
   PROJECT_TITLE_MAX,
   PROJECT_UPDATE_MAX,
 } from "@/lib/project";
+import { JOURNAL_NOTE_MAX, loadJournalEntry } from "@/lib/journal";
 import {
   SCREEN_LIMIT_MAX,
   SCREEN_LIMIT_MIN,
   formatMinutes,
 } from "@/lib/screen-time";
+import { saveJournalEntry } from "@/lib/services/journal";
+import { loadStatus } from "@/lib/services/status";
 import { logActivity } from "@/lib/services/log";
 import {
   addMilestone,
@@ -34,8 +37,14 @@ import {
 import { saveLink } from "@/lib/services/saved";
 import { saveScreenLimit, saveScreenTime } from "@/lib/services/screen-time";
 import type { DbSession } from "@/lib/services/session";
-import { pickTaskForSession } from "@/lib/services/tasks";
-import { ENERGY_LEVELS } from "@/lib/task";
+import {
+  completePickedTask,
+  loadOpenSuggestion,
+  pickTaskForSession,
+  skipPickedTask,
+} from "@/lib/services/tasks";
+import { SKIP_REASON_VALUES } from "@/lib/suggestions";
+import { ENERGY_LEVELS, type Felt } from "@/lib/task";
 import { dayKeyLabel, istDayKey } from "@/lib/week";
 
 /**
@@ -71,6 +80,13 @@ function monthFromInput(month: string | undefined, now: Date): MonthRef | null {
 }
 
 const INVALID_MONTH = "Use a month like 2026-11.";
+
+/** The tool vocabulary says "right"; `completions.felt` stores "ok". */
+function completionFelt(felt: "easy" | "right" | "hard" | undefined): Felt {
+  if (felt === "easy") return "easy";
+  if (felt === "hard") return "hard";
+  return "ok";
+}
 
 /** Tool set for one signed-in user; `now` keeps tests and defaults stable. */
 export function chatTools(session: DbSession, now: Date = new Date()) {
@@ -156,6 +172,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
         return {
           ok: true,
           message: `Try “${task.title}” for about ${task.minutes} minutes. ${task.reason}`,
+          suggestionId: task.suggestionId,
           task: {
             title: task.title,
             minutes: task.minutes,
@@ -165,6 +182,142 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
             url: task.url,
             reason: task.reason,
           },
+        };
+      },
+    }),
+
+    complete_suggestion: tool({
+      description:
+        "Mark the task from the last pick_task as done and record how it felt. Pass the suggestion id that pick_task returned.",
+      inputSchema: z.object({
+        suggestion_id: z
+          .string()
+          .min(1)
+          .describe("The suggestion id returned by pick_task."),
+        felt: z.enum(["easy", "right", "hard"]).optional(),
+        liked: z.boolean().optional(),
+        takeaway: z.string().trim().max(280).optional(),
+      }),
+      execute: async (input) => {
+        const found = await loadOpenSuggestion(
+          session,
+          input.suggestion_id,
+          now,
+        );
+
+        if (!found.ok) return failure(found.message);
+
+        const result = await completePickedTask(session, {
+          task: {
+            source: found.task.source,
+            itemId: found.task.itemId,
+            goal: found.task.goal,
+            elapsedMinutes: null,
+            distanceKm: null,
+            takeaway: input.takeaway ?? null,
+            suggestionId: found.task.suggestionId,
+          },
+          felt: completionFelt(input.felt),
+          liked: input.liked ?? null,
+        });
+
+        if (!result.ok) return failure(result.message);
+
+        return {
+          ok: true,
+          message: result.message,
+          title: found.task.title,
+        };
+      },
+    }),
+
+    skip_suggestion: tool({
+      description:
+        "Skip the task from the last pick_task. Pass the suggestion id that pick_task returned.",
+      inputSchema: z.object({
+        suggestion_id: z
+          .string()
+          .min(1)
+          .describe("The suggestion id returned by pick_task."),
+        reason: z.enum(SKIP_REASON_VALUES).optional(),
+      }),
+      execute: async (input) => {
+        const found = await loadOpenSuggestion(
+          session,
+          input.suggestion_id,
+          now,
+        );
+
+        if (!found.ok) return failure(found.message);
+
+        const result = await skipPickedTask(session, {
+          task: {
+            source: found.task.source,
+            itemId: found.task.itemId,
+            suggestionId: found.task.suggestionId,
+          },
+          reason: input.reason ?? "not_now",
+        });
+
+        if (!result.ok) return failure(result.message);
+
+        return {
+          ok: true,
+          message: `${result.message} · ${found.task.title}`,
+          title: found.task.title,
+        };
+      },
+    }),
+
+    get_status: tool({
+      description:
+        "Read a numbers-only snapshot: current streak, this week's progress per target, today's completion count and which of the last three days are missing screen time. It never returns journal text.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const status = await loadStatus(session, now);
+
+        return {
+          ok: true,
+          message: `Streak ${status.streakDays} days · ${status.todayCompletions} logged today · screen time missing for ${status.missingScreenDays.length} of the last 3 days.`,
+          ...status,
+        };
+      },
+    }),
+
+    save_journal: tool({
+      description:
+        "Save a journal entry for a day: a mood from 1 (rough) to 5 (great), one line of up to 200 characters, or both. Only when the user asks; never read the note back to them.",
+      inputSchema: z.object({
+        mood: z.number().int().min(1).max(5).nullable().optional(),
+        note: z.string().max(JOURNAL_NOTE_MAX).nullable().optional(),
+        day: DAY_KEY.optional(),
+      }),
+      execute: async (input) => {
+        const day = input.day ?? istDayKey(now);
+
+        // A note-only save keeps the mood already written for that day.
+        let mood = input.mood ?? null;
+        if (input.mood === undefined && input.note) {
+          const existing = await loadJournalEntry(
+            session.supabase,
+            session.userId,
+            day,
+          ).catch(() => null);
+          mood = existing?.mood ?? null;
+        }
+
+        const result = await saveJournalEntry(
+          session,
+          { mood, note: input.note ?? null, day },
+          now,
+        );
+
+        if (!result.ok) return failure(result.message);
+
+        return {
+          ok: true,
+          message: `Journal saved for ${dayKeyLabel(result.entry.day)}.`,
+          day: result.entry.day,
         };
       },
     }),

@@ -5,21 +5,10 @@ import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
 import { pickTask, type PickRequest } from "@/lib/pick-service";
-import {
-  SKIP_REASON_VALUES,
-  toSuggestionFelt,
-  type SkipReason,
-  type SuggestionFelt,
-} from "@/lib/suggestions";
+import { completePickedTask, skipPickedTask } from "@/lib/services/tasks";
+import { SKIP_REASON_VALUES } from "@/lib/suggestions";
 import { createClient } from "@/lib/supabase/server";
-import {
-  DEFAULT_DISTANCE_KM,
-  DEFAULT_MINUTES,
-  DISTANCE_GOAL,
-  findGenericTask,
-  goalLabel,
-  type PickedTask,
-} from "@/lib/task";
+import { type PickedTask } from "@/lib/task";
 
 type Session = {
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -122,8 +111,8 @@ export async function pickTaskAction(input: unknown): Promise<PickResult> {
 }
 
 /**
- * Records the skip on a real item (generic suggestions have nothing to record)
- * and immediately returns another task.
+ * Records the skip and immediately returns another task. The skip itself lives
+ * in `lib/services/tasks` so the chat tool closes suggestions the same way.
  */
 export async function skipTaskAction(input: unknown): Promise<PickResult> {
   const parsed = skipSchema.safeParse(input);
@@ -138,13 +127,14 @@ export async function skipTaskAction(input: unknown): Promise<PickResult> {
   if (!session) return { ok: false, message: SIGNED_OUT };
 
   const { pick, task, reason } = parsed.data;
-  if (task.source === "item" && task.itemId) {
-    await recordSkip(session, task.itemId);
-  }
 
-  await finishSuggestion(session, task.suggestionId, {
-    outcome: "skipped",
-    skipReason: reason,
+  await skipPickedTask(session, {
+    task: {
+      source: task.source,
+      itemId: task.itemId,
+      suggestionId: task.suggestionId,
+    },
+    reason,
   });
 
   try {
@@ -160,95 +150,9 @@ export async function skipTaskAction(input: unknown): Promise<PickResult> {
 }
 
 /**
- * Supabase's REST API cannot express `skipped_count + 1`, so read the current
- * value first. One user, one device at a time — good enough here.
- */
-async function recordSkip(session: Session, itemId: string): Promise<void> {
-  const { data, error } = await session.supabase
-    .from("items")
-    .select("skipped_count")
-    .eq("id", itemId)
-    .eq("user_id", session.userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Could not read skipped_count:", error.message);
-    return;
-  }
-
-  const current = typeof data?.skipped_count === "number" ? data.skipped_count : 0;
-  const { error: updateError } = await session.supabase
-    .from("items")
-    .update({
-      skipped_count: current + 1,
-      last_skipped_at: new Date().toISOString(),
-    })
-    .eq("id", itemId)
-    .eq("user_id", session.userId);
-
-  if (updateError) {
-    console.error("Could not record the skip:", updateError.message);
-  }
-}
-
-type SuggestionPatch = {
-  outcome: "done" | "skipped";
-  felt?: SuggestionFelt;
-  liked?: boolean | null;
-  actualMinutes?: number;
-  skipReason?: SkipReason;
-};
-
-/**
- * Closes out the suggestion behind a task. Losing this write only costs a bit
- * of learning, so it is logged rather than shown as an error.
- */
-async function finishSuggestion(
-  session: Session,
-  suggestionId: string | null,
-  patch: SuggestionPatch,
-): Promise<void> {
-  if (!suggestionId) return;
-
-  const update: Record<string, unknown> = { outcome: patch.outcome };
-  if (patch.felt) update.felt = patch.felt;
-  if (patch.liked !== undefined) update.liked = patch.liked;
-  if (
-    typeof patch.actualMinutes === "number" &&
-    patch.actualMinutes > 0
-  ) {
-    update.actual_minutes = patch.actualMinutes;
-  }
-  if (patch.skipReason) update.skip_reason = patch.skipReason;
-
-  const { error } = await session.supabase
-    .from("suggestions")
-    .update(update)
-    .eq("id", suggestionId)
-    .eq("user_id", session.userId);
-
-  if (error) {
-    console.error("Could not update the suggestion:", error.message);
-  }
-}
-
-function distanceFor(value: number | null | undefined): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.min(100, value);
-  }
-  return DEFAULT_DISTANCE_KM;
-}
-
-function loggedMessage(minutes: number, label: string): string {
-  return `Logged ${minutes} min · ${label}`;
-}
-
-/**
  * Saves a completion, marks the underlying item done and refreshes Home so the
- * streak and weekly pills update.
- *
- * Titles, goals and estimates are re-read from the database (items) or the
- * generic catalog, never trusted from the client.
+ * streak and weekly pills update. The write rules live in `lib/services/tasks`
+ * (the chat tool calls the same function); this wrapper only adds revalidation.
  */
 export async function completeTaskAction(
   input: unknown,
@@ -264,121 +168,11 @@ export async function completeTaskAction(
   const session = await requireSession();
   if (!session) return { ok: false, message: SIGNED_OUT };
 
-  const { task, felt, liked } = parsed.data;
+  const result = await completePickedTask(session, parsed.data);
 
-  if (task.source === "generic") {
-    const template = findGenericTask(task.goal);
-    if (!template) {
-      return {
-        ok: false,
-        message: "That suggestion is no longer available. Try What now? again.",
-      };
-    }
-
-    const minutes = task.elapsedMinutes ?? template.minutes;
-    const { error } = await session.supabase.from("completions").insert({
-      user_id: session.userId,
-      item_id: null,
-      goal: template.goal,
-      kind: template.goal,
-      minutes,
-      felt,
-      source: "suggestion",
-      distance_km:
-        template.goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
-    });
-
-    if (error) {
-      console.error("Could not log the completed task:", error.message);
-      return {
-        ok: false,
-        message: "Could not save that completion. Please try again.",
-      };
-    }
-
-    await finishSuggestion(session, task.suggestionId, {
-      outcome: "done",
-      felt: toSuggestionFelt(felt),
-      liked,
-      actualMinutes: minutes,
-    });
-
-    revalidatePath("/");
-    return { ok: true, message: loggedMessage(minutes, goalLabel(template.goal)) };
-  }
-
-  if (!task.itemId) {
-    return { ok: false, message: "That task is no longer in your list." };
-  }
-
-  const { data: item, error: itemError } = await session.supabase
-    .from("items")
-    .select("id, type, goal, est_minutes")
-    .eq("id", task.itemId)
-    .eq("user_id", session.userId)
-    .maybeSingle();
-
-  if (itemError) {
-    console.error("Could not load the item:", itemError.message);
-    return { ok: false, message: describeDbError(itemError) };
-  }
-
-  if (!item) {
-    return { ok: false, message: "That task is no longer in your list." };
-  }
-
-  const goal = typeof item.goal === "string" && item.goal ? item.goal : null;
-  const estimate =
-    typeof item.est_minutes === "number" && item.est_minutes > 0
-      ? item.est_minutes
-      : DEFAULT_MINUTES;
-  const minutes = task.elapsedMinutes ?? estimate;
-
-  const { error: insertError } = await session.supabase
-    .from("completions")
-    .insert({
-      user_id: session.userId,
-      item_id: item.id,
-      goal,
-      kind: typeof item.type === "string" && item.type ? item.type : "item",
-      minutes,
-      felt,
-      source: "suggestion",
-      distance_km: goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
-    });
-
-  if (insertError) {
-    console.error("Could not log the completed item:", insertError.message);
-    return {
-      ok: false,
-      message: "Could not save that completion. Please try again.",
-    };
-  }
-
-  await finishSuggestion(session, task.suggestionId, {
-    outcome: "done",
-    felt: toSuggestionFelt(felt),
-    liked,
-    actualMinutes: minutes,
-  });
-
-  // The takeaway is optional; only write it when the user typed one so an
-  // earlier note is never wiped by an empty field.
-  const itemUpdate: { status: string; takeaway?: string } = { status: "done" };
-  if (task.takeaway) itemUpdate.takeaway = task.takeaway;
-
-  const { error: updateError } = await session.supabase
-    .from("items")
-    .update(itemUpdate)
-    .eq("id", item.id)
-    .eq("user_id", session.userId);
-
-  if (updateError) {
-    // The completion is saved; this only leaves the item in the backlog.
-    console.error("Could not mark the item done:", updateError.message);
-  }
+  if (!result.ok) return result;
 
   revalidatePath("/");
   revalidatePath("/saved");
-  return { ok: true, message: loggedMessage(minutes, goalLabel(goal)) };
+  return result;
 }

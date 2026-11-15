@@ -4,23 +4,16 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { describeDbError } from "@/lib/errors";
-import {
-  JOURNAL_COLUMNS,
-  JOURNAL_NOTE_MAX,
-  toJournalEntry,
-  type JournalEntry,
-} from "@/lib/journal";
+import { JOURNAL_NOTE_MAX, type JournalEntry } from "@/lib/journal";
+import { saveJournalEntry } from "@/lib/services/journal";
 import { createClient } from "@/lib/supabase/server";
-import { istDayKey, shiftDayKey } from "@/lib/week";
+import { istDayKey } from "@/lib/week";
 
 export type JournalResult =
   | { ok: true; entry: JournalEntry }
   | { ok: false; message: string };
 
 const SIGNED_OUT = "You are signed out. Refresh the page and sign in again.";
-
-/** How far back the day panel lets you edit a journal entry. */
-const JOURNAL_MAX_DAYS_BACK = 400;
 
 const journalSchema = z.object({
   mood: z.number().int().min(1).max(5).nullable().default(null),
@@ -32,19 +25,10 @@ const dayJournalSchema = journalSchema.extend({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
-/**
- * Writes one entry per IST day. `updated_at` is set here rather than by a
- * trigger so the upsert stays a single round trip.
- */
-async function persistJournal(
-  day: string,
-  mood: number | null,
-  note: string | null,
+/** The write itself lives in `lib/services/journal` (the chat tool shares it). */
+async function persist(
+  input: z.infer<typeof dayJournalSchema>,
 ): Promise<JournalResult> {
-  if (mood === null && !note) {
-    return { ok: false, message: "Pick a mood or write a line." };
-  }
-
   const supabase = await createClient();
   const { data: auth, error: authError } = await supabase.auth.getClaims();
 
@@ -53,31 +37,23 @@ async function persistJournal(
     return { ok: false, message: SIGNED_OUT };
   }
 
-  const { data, error } = await supabase
-    .from("journal_entries")
-    .upsert(
-      {
-        user_id: auth.claims.sub,
-        day,
-        mood,
-        note,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,day" },
-    )
-    .select(JOURNAL_COLUMNS)
-    .single();
+  try {
+    const result = await saveJournalEntry(
+      { supabase, userId: auth.claims.sub },
+      input,
+    );
 
-  if (error) {
-    console.error("Could not save the journal entry:", error.message);
+    if (!result.ok) return result;
+
+    revalidatePath("/");
+    revalidatePath("/journal");
+    revalidatePath("/progress");
+
+    return result;
+  } catch (error) {
+    console.error("Could not save the journal entry:", error);
     return { ok: false, message: describeDbError(error) };
   }
-
-  revalidatePath("/");
-  revalidatePath("/journal");
-  revalidatePath("/progress");
-
-  return { ok: true, entry: toJournalEntry(data) };
 }
 
 /**
@@ -94,8 +70,7 @@ export async function saveJournalAction(input: unknown): Promise<JournalResult> 
     };
   }
 
-  const note = parsed.data.note?.trim() ? parsed.data.note.trim() : null;
-  return persistJournal(istDayKey(new Date()), parsed.data.mood, note);
+  return persist({ ...parsed.data, day: istDayKey(new Date()) });
 }
 
 /**
@@ -112,19 +87,6 @@ export async function saveJournalDayAction(input: unknown): Promise<JournalResul
     };
   }
 
-  const { day, mood } = parsed.data;
-  const note = parsed.data.note?.trim() ? parsed.data.note.trim() : null;
-
-  const todayKey = istDayKey(new Date());
-
-  if (day > todayKey) {
-    return { ok: false, message: "That day has not happened yet." };
-  }
-
-  if (day < shiftDayKey(todayKey, -JOURNAL_MAX_DAYS_BACK)) {
-    return { ok: false, message: "That day is too far back to edit here." };
-  }
-
-  return persistJournal(day, mood, note);
+  return persist(parsed.data);
 }
 
