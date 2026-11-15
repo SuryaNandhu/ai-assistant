@@ -1,4 +1,4 @@
-import type { GoalProgress, WeeklyProgress } from "@/lib/progress";
+import { targetHint, type GoalProgress, type WeeklyProgress } from "@/lib/progress";
 import type { Streak } from "@/lib/streak";
 import { istWeekLabel } from "@/lib/week";
 
@@ -36,7 +36,7 @@ export function HomeHeader({ progress, streak, error }: HomeHeaderProps) {
 
         {progress && progress.goals.length > 0 ? (
           <ul
-            aria-label="Weekly targets"
+            aria-label="Targets"
             className="mt-4 -mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {progress.goals.map((goal) => (
@@ -48,7 +48,7 @@ export function HomeHeader({ progress, streak, error }: HomeHeaderProps) {
         ) : (
           !error && (
             <p className="mt-4 text-xs text-muted-foreground">
-              No weekly targets yet.
+              No targets yet.
             </p>
           )
         )}
@@ -59,6 +59,7 @@ export function HomeHeader({ progress, streak, error }: HomeHeaderProps) {
 
 function ProgressPill({ goal }: { goal: GoalProgress }) {
   const met = goal.done >= goal.perWeek;
+  const hint = targetHint(goal);
 
   return (
     <span
@@ -73,6 +74,10 @@ function ProgressPill({ goal }: { goal: GoalProgress }) {
       <span className="font-semibold tabular-nums text-foreground">
         {goal.done}/{goal.perWeek}
       </span>
+      {goal.period === "month" && (
+        <span className="text-[11px] text-muted-foreground">this month</span>
+      )}
+      {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
       {met && (
         <svg
           aria-hidden="true"

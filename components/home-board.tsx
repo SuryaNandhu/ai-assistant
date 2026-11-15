@@ -170,6 +170,7 @@ export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
   function handleConfirm(input: {
     felt: Felt;
     distanceKm: number | null;
+    quantity: number | null;
     takeaway: string | null;
     liked: boolean | null;
   }) {
@@ -187,6 +188,7 @@ export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
           goal: current.goal,
           elapsedMinutes,
           distanceKm: input.distanceKm,
+          quantity: input.quantity,
           takeaway: input.takeaway,
           suggestionId: current.suggestionId,
         },

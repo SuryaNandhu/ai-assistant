@@ -5,6 +5,7 @@ import {
 } from "@/lib/screen-time";
 import type { DbSession } from "@/lib/services/session";
 import { loadStreak } from "@/lib/streak";
+import type { TargetPeriod } from "@/lib/targets";
 import { istDayKey, shiftDayKey } from "@/lib/week";
 
 /** Numbers only: the assistant never sees journal text or task titles. */
@@ -14,8 +15,18 @@ export type StatusSummary = {
   completedToday: boolean;
   /** Completions logged today, IST. */
   todayCompletions: number;
-  /** This week's targets with how many completions count toward each. */
-  week: { goal: string; done: number; perWeek: number }[];
+  /** Every active target, counted in its own period (week or month). */
+  targets: {
+    goal: string;
+    label: string;
+    done: number;
+    perPeriod: number;
+    period: TargetPeriod;
+    /** Daily minimum for day-based targets (job search: 3 a day). */
+    minQuantity: number | null;
+    /** Quantity logged today, when the target has a daily minimum. */
+    todayQuantity: number | null;
+  }[];
   /** First day with screen time, or null if nothing is logged yet. */
   screenTrackingStart: string | null;
   /** Completed days since tracking began with no screen time, oldest first. */
@@ -60,10 +71,14 @@ export async function loadStatus(
     longestStreak: streak.longest,
     completedToday: streak.completedToday,
     todayCompletions: todayCount.error ? 0 : (todayCount.count ?? 0),
-    week: progress.goals.map((goal) => ({
+    targets: progress.goals.map((goal) => ({
       goal: goal.goal,
+      label: goal.label,
       done: goal.done,
-      perWeek: goal.perWeek,
+      perPeriod: goal.perWeek,
+      period: goal.period,
+      minQuantity: goal.minQuantity,
+      todayQuantity: goal.minQuantity === null ? null : goal.todayQuantity,
     })),
     screenTrackingStart: tracking.start,
     missingScreenDays: tracking.missing,

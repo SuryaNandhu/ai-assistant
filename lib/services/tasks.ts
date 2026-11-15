@@ -47,6 +47,8 @@ export type TaskRef = {
   /** Whole minutes; null means "use the estimate". */
   elapsedMinutes: number | null;
   distanceKm: number | null;
+  /** How many things this sitting covered (3 applications); null means one. */
+  quantity?: number | null;
   /** One-line takeaway for a link; ignored for generic suggestions. */
   takeaway: string | null;
   suggestionId: string | null;
@@ -141,8 +143,25 @@ function distanceFor(value: number | null | undefined): number {
   return DEFAULT_DISTANCE_KM;
 }
 
-function loggedMessage(minutes: number, label: string): string {
-  return `Logged ${minutes} min · ${label}`;
+/**
+ * A daily-minimum target needs a number on the completion ("3 applications").
+ * Anything blank or silly is stored as NULL, which every reader treats as one.
+ */
+function quantityFor(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded < 1) return null;
+  return Math.min(1000, rounded);
+}
+
+function loggedMessage(
+  minutes: number,
+  label: string,
+  quantity?: number | null,
+): string {
+  const count =
+    typeof quantity === "number" && quantity > 1 ? ` · ${quantity} done` : "";
+  return `Logged ${minutes} min · ${label}${count}`;
 }
 
 /**
@@ -174,6 +193,7 @@ export async function completePickedTask(
       minutes,
       felt,
       source: "suggestion",
+      quantity: quantityFor(task.quantity),
       distance_km:
         template.goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
@@ -236,6 +256,7 @@ export async function completePickedTask(
       minutes,
       felt,
       source: "suggestion",
+      quantity: quantityFor(task.quantity),
       distance_km: goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
 

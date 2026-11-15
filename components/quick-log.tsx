@@ -70,6 +70,12 @@ export function QuickLog({ targets, todayKey, minDayKey }: QuickLogProps) {
             className="shrink-0 whitespace-nowrap rounded-full border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             + {target.label}
+            {target.minQuantity !== null && (
+              <span className="ml-1.5 text-[11px] tabular-nums">
+                {Math.min(target.todayQuantity, target.minQuantity)}/
+                {target.minQuantity} today
+              </span>
+            )}
           </button>
         ))}
       </div>

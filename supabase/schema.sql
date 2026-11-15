@@ -8,6 +8,9 @@
 -- created only when missing. Goal-like columns (items.goal, items.type,
 -- completions.kind, completions.goal) are deliberately plain text with no
 -- CHECK constraints, so goals can be created freely at runtime.
+--
+-- items.url is nullable: a one-off task (`type = 'task'`) is a saved entry with
+-- a title and no link, which is why nothing may require a URL.
 
 create extension if not exists pgcrypto;
 
@@ -54,6 +57,7 @@ create table if not exists public.completions (
   kind text not null,
   goal text,
   distance_km numeric,
+  quantity integer check (quantity is null or quantity between 0 and 1000),
   minutes integer check (minutes is null or minutes >= 0),
   felt text check (felt in ('easy', 'ok', 'hard')),
   source text not null default 'suggestion'
@@ -67,7 +71,7 @@ create index if not exists completions_user_completed_idx
   on public.completions (user_id, completed_at desc);
 
 -- ---------------------------------------------------------------------------
--- targets: one weekly number per goal ("leetcode, 3x / week")
+-- targets: one number per goal ("leetcode, 3x / week", "job search, 3 days x 3")
 -- ---------------------------------------------------------------------------
 create table if not exists public.targets (
   id uuid primary key default gen_random_uuid(),
@@ -76,6 +80,11 @@ create table if not exists public.targets (
   label text not null,
   per_week integer not null,
   min_distance_km numeric,
+  period text not null default 'week' check (period in ('week', 'month')),
+  min_quantity integer check (min_quantity is null or min_quantity between 1 and 1000),
+  est_minutes integer check (est_minutes is null or est_minutes between 1 and 600),
+  energy text not null default 'normal' check (energy in ('low', 'normal', 'high')),
+  is_custom boolean not null default false,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (user_id, goal)
@@ -178,6 +187,18 @@ create table if not exists public.tool_calls (
 
 create index if not exists tool_calls_user_created_idx
   on public.tool_calls (user_id, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- data_exports: one row per JSON export, which enforces 5 exports per hour
+-- ---------------------------------------------------------------------------
+create table if not exists public.data_exports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists data_exports_user_created_idx
+  on public.data_exports (user_id, created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- suggestions: one row per task the picker surfaced, plus what came of it.
@@ -290,6 +311,7 @@ alter table public.project_milestones enable row level security;
 alter table public.resume_drafts enable row level security;
 alter table public.screen_time_entries enable row level security;
 alter table public.user_settings enable row level security;
+alter table public.data_exports enable row level security;
 
 drop policy if exists "items owner" on public.items;
 create policy "items owner" on public.items
@@ -369,6 +391,12 @@ create policy "user_settings owner" on public.user_settings
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
 
+drop policy if exists "data_exports owner" on public.data_exports;
+create policy "data_exports owner" on public.data_exports
+  for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
 
 -- ---------------------------------------------------------------------------
 -- daily_completions: completions per user per day, bucketed in IST.
@@ -386,25 +414,41 @@ group by
   (c.completed_at at time zone 'Asia/Kolkata')::date;
 
 -- ---------------------------------------------------------------------------
--- Default weekly targets for every existing user. Re-runnable: existing rows
+-- Default targets for every existing user. Re-runnable: existing rows
 -- (including user edits) are never overwritten.
+--
+-- job_search is a daily-minimum rule: three search days a week, and a day only
+-- counts once three applications were logged. resume_update is monthly.
 -- ---------------------------------------------------------------------------
-insert into public.targets (user_id, goal, label, per_week, min_distance_km)
+insert into public.targets (
+  user_id,
+  goal,
+  label,
+  per_week,
+  min_distance_km,
+  period,
+  min_quantity,
+  est_minutes
+)
 select
   u.id,
   v.goal,
   v.label,
   v.per_week,
-  v.min_distance_km
+  v.min_distance_km,
+  v.period,
+  v.min_quantity,
+  v.est_minutes
 from auth.users u
 cross join (
   values
-    ('leetcode',    'LeetCode',            3, null::numeric),
-    ('ai_learning', 'AI learning',         3, null::numeric),
-    ('bi',          'Tableau / Power BI',  2, null::numeric),
-    ('job_search',  'Job search',          2, null::numeric),
-    ('walk_run',    '5 km walk/run',       3, 5::numeric)
-) as v (goal, label, per_week, min_distance_km)
+    ('leetcode',      'LeetCode',            3, null::numeric, 'week',  null::integer, null::integer),
+    ('ai_learning',   'AI learning',         3, null::numeric, 'week',  null::integer, null::integer),
+    ('bi',            'Tableau / Power BI',  2, null::numeric, 'week',  null::integer, null::integer),
+    ('job_search',    'Job search',          3, null::numeric, 'week',  3,             45),
+    ('walk_run',      '5 km walk/run',       3, 5::numeric,    'week',  null::integer, null::integer),
+    ('resume_update', 'Update resume',       1, null::numeric, 'month', null::integer, 60)
+) as v (goal, label, per_week, min_distance_km, period, min_quantity, est_minutes)
 on conflict (user_id, goal) do nothing;
 
 -- Ask PostgREST (the Supabase API layer) to reload its schema cache.

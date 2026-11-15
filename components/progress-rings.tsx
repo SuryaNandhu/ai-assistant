@@ -1,16 +1,16 @@
-import type { GoalProgress } from "@/lib/progress";
+import { periodLabel, type GoalProgress } from "@/lib/progress";
 
 const SIZE = 40;
 const RADIUS = 16;
 const STROKE = 4;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-/** One ring per active weekly target: done / per_week for the current week. */
+/** One ring per active target: done / per period, weekly or monthly. */
 export function ProgressRings({ goals }: { goals: readonly GoalProgress[] }) {
   if (goals.length === 0) {
     return (
       <p className="rounded-2xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-        No weekly targets yet.
+        No targets yet.
       </p>
     );
   }
@@ -66,8 +66,21 @@ function Ring({ goal }: { goal: GoalProgress }) {
       <span className="line-clamp-2 text-xs leading-tight text-muted-foreground">
         {goal.label}
       </span>
+      {goal.period === "month" && (
+        <span className="text-[11px] leading-tight text-muted-foreground">
+          this month
+        </span>
+      )}
+      {goal.minQuantity !== null && (
+        <span className="text-[11px] leading-tight text-muted-foreground tabular-nums">
+          today {goal.todayQuantity}/{goal.minQuantity}
+        </span>
+      )}
       <span className="sr-only">
-        {goal.done} of {goal.perWeek} this week
+        {goal.done} of {goal.perWeek} {periodLabel(goal.period)}
+        {goal.minQuantity !== null
+          ? `, ${goal.todayQuantity} of ${goal.minQuantity} today`
+          : ""}
         {met ? ", target met" : ""}
       </span>
     </li>

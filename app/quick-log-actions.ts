@@ -27,6 +27,8 @@ const quickLogSchema = z.object({
   goal: z.string().trim().max(60).nullable().default(null),
   minutes: z.number().int().min(1).max(600),
   distanceKm: z.number().min(0).max(100).nullable().default(null),
+  /** Applications sent / problems solved; null means a single thing. */
+  quantity: z.number().int().min(1).max(1000).nullable().default(null),
   felt: z.enum(["easy", "ok", "hard"]).nullable().default(null),
   note: z.string().trim().max(280).nullable().default(null),
   /** IST day key, `YYYY-MM-DD`. */

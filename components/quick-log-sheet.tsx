@@ -49,6 +49,12 @@ export function QuickLogSheet({
   const [distance, setDistance] = useState(
     target && target.distanceKm !== null ? String(target.distanceKm) : "",
   );
+  // A daily minimum is prefilled with what is still missing today.
+  const [quantity, setQuantity] = useState(
+    target && target.minQuantity !== null && target.quantity !== null
+      ? String(target.quantity)
+      : "",
+  );
   const [felt, setFelt] = useState<Felt>("ok");
   const [note, setNote] = useState("");
   const [day, setDay] = useState(initialDay);
@@ -69,6 +75,11 @@ export function QuickLogSheet({
     setGoal(next.goal);
     setMinutes(String(next.minutes));
     setDistance(next.distanceKm === null ? "" : String(next.distanceKm));
+    setQuantity(
+      next.minQuantity !== null && next.quantity !== null
+        ? String(next.quantity)
+        : "",
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -103,11 +114,22 @@ export function QuickLogSheet({
 
     const trimmedNote = note.trim() ? note.trim().slice(0, 280) : null;
 
+    let parsedQuantity: number | null = null;
+    if (target.minQuantity !== null) {
+      const value = Math.round(Number(quantity));
+      if (!Number.isFinite(value) || value < 1 || value > 1000) {
+        setError("How many should be between 1 and 1000.");
+        return;
+      }
+      parsedQuantity = value;
+    }
+
     startSaving(async () => {
       const result = await quickLogAction({
         goal: target.goal,
         minutes: Math.round(parsedMinutes),
         distanceKm,
+        quantity: parsedQuantity,
         felt,
         note: trimmedNote,
         day,
@@ -208,7 +230,30 @@ export function QuickLogSheet({
               />
             </label>
           )}
+
+          {target.minQuantity !== null && (
+            <label className="block">
+              <span className="text-sm font-medium">How many?</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={1000}
+                value={quantity}
+                onChange={(event) => setQuantity(event.target.value)}
+                className={INPUT_CLASS}
+              />
+            </label>
+          )}
         </div>
+
+        {target.minQuantity !== null && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {target.todayQuantity >= target.minQuantity
+              ? `${target.todayQuantity} already today, so this day already counts.`
+              : `${target.todayQuantity} of ${target.minQuantity} today. A day only counts once it reaches ${target.minQuantity}.`}
+          </p>
+        )}
 
         {target.distanceKm !== null && (
           <p className="mt-1 text-xs text-muted-foreground">

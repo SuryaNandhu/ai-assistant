@@ -18,9 +18,11 @@ import {
 import {
   findGoalProgress,
   loadWeeklyProgress,
+  periodLabel,
   type GoalProgress,
   type WeeklyProgress,
 } from "@/lib/progress";
+import { remainingQuantity } from "@/lib/quick-log";
 import { effectiveOutcome, toSuggestionMode } from "@/lib/suggestions";
 import {
   DEFAULT_MINUTES,
@@ -134,11 +136,22 @@ function isEligible(
 
 /** One line explaining the pick, e.g. "LeetCode is 0/3 this week". */
 function reasonFor(label: string, progress: GoalProgress | undefined): string {
-  if (!progress) return `No weekly target for ${label} yet`;
+  if (!progress) return `No target for ${label} yet`;
+
+  const period = periodLabel(progress.period);
+  const total = `${progress.done}/${progress.perWeek} ${period}`;
+
   if (progress.done >= progress.perWeek) {
-    return `${label} is already ${progress.done}/${progress.perWeek} this week`;
+    return `${label} is already ${total}`;
   }
-  return `${label} is ${progress.done}/${progress.perWeek} this week`;
+
+  // A daily-minimum target counts search days, so say how today is going too.
+  const today =
+    progress.minQuantity !== null
+      ? ` · ${progress.todayQuantity}/${progress.minQuantity} today`
+      : "";
+
+  return `${label} is ${total}${today}`;
 }
 
 async function loadTodoItems(
@@ -256,6 +269,8 @@ function itemSource(
       url: item.url,
       // Items without a goal have nothing to compare against.
       reason: item.goal ? reasonFor(label, target) : "From your backlog",
+      minQuantity: target?.minQuantity ?? null,
+      quantityRemaining: target ? remainingQuantity(target) : null,
       takeaway: item.takeaway ?? null,
     },
     tags,
@@ -279,10 +294,12 @@ function genericSource(
   progress: WeeklyProgress,
   request: PickRequest,
   calibration: ReadonlyMap<string, number>,
+  /** The target's own minutes/energy, which win over the catalog defaults. */
+  planned: { minutes: number; energy: Energy },
 ): Source {
   const target = findGoalProgress(progress, template.goal);
   const label = goalLabel(template.goal, target?.label);
-  const minutes = calibratedMinutes(template.minutes, template.goal, calibration);
+  const minutes = calibratedMinutes(planned.minutes, template.goal, calibration);
 
   return {
     task: {
@@ -295,17 +312,19 @@ function genericSource(
       goal: template.goal,
       goalLabel: label,
       minutes,
-      energy: template.energy,
+      energy: planned.energy,
       url: null,
       reason: reasonFor(label, target),
+      minQuantity: target?.minQuantity ?? null,
+      quantityRemaining: target ? remainingQuantity(target) : null,
     },
     tags: [],
-    estMinutes: template.minutes,
+    estMinutes: planned.minutes,
     features: {
       // A generic idea is its own activity, so the goal is its learning key.
       type: template.goal,
       tags: [],
-      energy: template.energy,
+      energy: planned.energy,
       minutes,
       availableMinutes: request.minutes,
       lastSkippedAt: null,
@@ -421,12 +440,28 @@ export async function pickTask(
     .map(({ item }) => itemSource(item, progress, request, calibration))
     .filter((source) => !exclude.has(source.task.key));
 
-  const genericSources = GENERIC_TASKS.filter(
-    (template) =>
-      template.minutes <= request.minutes &&
-      energyRank(template.energy) <= energyRank(request.energy),
-  )
-    .map((template) => genericSource(template, progress, request, calibration))
+  // A target may ask for more time or a different energy than the catalog
+  // default (job search: 45 minutes). The slot still has the final say.
+  const genericSources = GENERIC_TASKS.map((template) => {
+    const target = findGoalProgress(progress, template.goal);
+
+    return {
+      template,
+      minutes: target?.estMinutes ?? template.minutes,
+      energy: target?.energy ?? template.energy,
+    };
+  })
+    .filter(
+      ({ minutes, energy }) =>
+        minutes <= request.minutes &&
+        energyRank(energy) <= energyRank(request.energy),
+    )
+    .map(({ template, minutes, energy }) =>
+      genericSource(template, progress, request, calibration, {
+        minutes,
+        energy,
+      }),
+    )
     .filter((source) => !exclude.has(source.task.key));
 
   const pool =

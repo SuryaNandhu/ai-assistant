@@ -55,6 +55,8 @@ const completeSchema = z.object({
     /** Whole minutes on the clock; null means "use the estimate". */
     elapsedMinutes: z.number().int().min(1).max(600).nullable().default(null),
     distanceKm: z.number().min(0).max(100).nullable().default(null),
+    /** Applications sent / problems solved; null means a single thing. */
+    quantity: z.number().int().min(1).max(1000).nullable().default(null),
     /** One-line takeaway for a link; ignored for generic suggestions. */
     takeaway: z.string().trim().max(280).nullable().default(null),
     suggestionId: z.uuid().nullable().default(null),

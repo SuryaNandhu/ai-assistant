@@ -41,6 +41,7 @@ export const GOAL_LABELS: Record<string, string> = {
   bi: "Tableau / Power BI",
   job_search: "Job search",
   walk_run: "5 km walk/run",
+  resume_update: "Update resume",
 };
 
 /**
@@ -93,13 +94,22 @@ export const GENERIC_TASKS: readonly GenericTask[] = [
   },
   {
     goal: "job_search",
-    title: "Apply to 2 jobs or message 1 person",
-    minutes: 20,
+    // Three applications is the daily minimum; the Done sheet asks how many
+    // were actually sent, so a half-finished sitting does not count.
+    title: "Apply to 3 jobs or message 2 people",
+    minutes: 30,
     energy: "normal",
   },
   {
     goal: "walk_run",
     title: "5 km walk or run",
+    minutes: 60,
+    energy: "normal",
+  },
+  {
+    // Monthly target: one resume update, so it only fits a long slot.
+    goal: "resume_update",
+    title: "Add this month's project to your resume",
     minutes: 60,
     energy: "normal",
   },
@@ -130,6 +140,10 @@ export type PickedTask = {
   url: string | null;
   /** One short line explaining why this task surfaced. */
   reason: string;
+  /** Daily minimum for the goal, so the Done sheet can ask "how many?". */
+  minQuantity?: number | null;
+  /** What is still missing today, never below 1 when a minimum is set. */
+  quantityRemaining?: number | null;
   /** Existing one-line takeaway, when the item was read before. */
   takeaway?: string | null;
 };

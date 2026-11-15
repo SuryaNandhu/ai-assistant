@@ -21,6 +21,8 @@ type DoneSheetProps = {
   onConfirm: (input: {
     felt: Felt;
     distanceKm: number | null;
+    /** Only for goals with a daily minimum (job search: 3 applications). */
+    quantity: number | null;
     takeaway: string | null;
     liked: boolean | null;
   }) => void;
@@ -44,6 +46,12 @@ export function DoneSheet({
 }: DoneSheetProps) {
   const [felt, setFelt] = useState<Felt>("ok");
   const [distance, setDistance] = useState(String(DEFAULT_DISTANCE_KM));
+  // A daily minimum is prefilled with what is still missing today.
+  const [quantity, setQuantity] = useState(
+    task.minQuantity === null || task.minQuantity === undefined
+      ? ""
+      : String(task.quantityRemaining ?? task.minQuantity),
+  );
   const [takeaway, setTakeaway] = useState(task.takeaway ?? "");
   const [liked, setLiked] = useState<boolean | null>(null);
 
@@ -60,9 +68,22 @@ export function DoneSheet({
     event.preventDefault();
 
     const saved = takeaway.trim() ? takeaway.trim().slice(0, 280) : null;
+    const parsedQuantity = Number(quantity);
+    const counted =
+      task.minQuantity === null || task.minQuantity === undefined
+        ? null
+        : Number.isFinite(parsedQuantity) && parsedQuantity >= 1
+          ? Math.min(1000, Math.round(parsedQuantity))
+          : null;
 
     if (!isWalk) {
-      onConfirm({ felt, distanceKm: null, takeaway: saved, liked });
+      onConfirm({
+        felt,
+        distanceKm: null,
+        quantity: counted,
+        takeaway: saved,
+        liked,
+      });
       return;
     }
 
@@ -71,7 +92,7 @@ export function DoneSheet({
       ? Math.min(100, Math.max(0, parsed))
       : DEFAULT_DISTANCE_KM;
 
-    onConfirm({ felt, distanceKm, takeaway: saved, liked });
+    onConfirm({ felt, distanceKm, quantity: counted, takeaway: saved, liked });
   }
 
   return (
@@ -145,6 +166,34 @@ export function DoneSheet({
             />
             <p className="mt-1 text-xs text-muted-foreground">
               Only runs at or above your target distance count towards the week.
+            </p>
+          </div>
+        )}
+
+        {task.minQuantity !== null && task.minQuantity !== undefined && (
+          <div className="mt-4">
+            <label htmlFor="quantity" className="text-sm font-medium">
+              How many?
+            </label>
+            <input
+              id="quantity"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={1000}
+              step={1}
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              className="mt-2 h-12 w-full rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Only a day with {task.minQuantity} or more counts towards{" "}
+              {task.goalLabel}
+              {task.quantityRemaining !== null &&
+              task.quantityRemaining !== undefined
+                ? ` · ${task.quantityRemaining} more to go today`
+                : ""}
+              .
             </p>
           </div>
         )}

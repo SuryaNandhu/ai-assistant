@@ -99,12 +99,22 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           .string()
           .nullable()
           .describe(
-            "Goal key such as leetcode, ai_learning, bi, job_search, walk_run, or null for other work.",
+            "Goal key such as leetcode, ai_learning, bi, job_search, walk_run, resume_update, or null for other work.",
           ),
         minutes: z.number().int().min(1).max(600),
         note: z.string().max(200).nullable().optional(),
         day: DAY_KEY.optional(),
         distanceKm: z.number().min(0).max(100).nullable().optional(),
+        quantity: z
+          .number()
+          .int()
+          .min(1)
+          .max(1000)
+          .nullable()
+          .optional()
+          .describe(
+            "How many things were done, for goals with a daily minimum (job_search: applications sent). Omit for a single unit.",
+          ),
       }),
       execute: async (input) => {
         const result = await logActivity(session, {
@@ -113,6 +123,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           note: input.note ?? null,
           day: input.day,
           distanceKm: input.distanceKm ?? null,
+          quantity: input.quantity ?? null,
         });
 
         if (!result.ok) return failure(result.message);
@@ -271,7 +282,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     get_status: tool({
       description:
-        "Read a numbers-only snapshot: current streak, this week's progress per target, today's completion count and which completed days (from the first day screen time was logged) are missing screen time. It never returns journal text.",
+        "Read a numbers-only snapshot: current streak, progress per target in its own period (weekly or monthly, with the daily minimum where one exists), today's completion count and which completed days (from the first day screen time was logged) are missing screen time. It never returns journal text.",
       inputSchema: z.object({}),
       execute: async () => {
         const status = await loadStatus(session, now);

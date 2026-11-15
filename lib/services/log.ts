@@ -8,10 +8,12 @@ import { DISTANCE_GOAL } from "@/lib/task";
 import { istDayKey, shiftDayKey } from "@/lib/week";
 
 export type LogActivityInput = {
-  /** Goal key from the weekly targets, or null for "Other". */
+  /** Goal key from the active targets, or null for "Other". */
   goal: string | null;
   minutes: number;
   distanceKm?: number | null;
+  /** Applications sent / problems solved; null or 1 means a single thing. */
+  quantity?: number | null;
   felt?: "easy" | "ok" | "hard" | null;
   note?: string | null;
   /** IST day key; defaults to today. */
@@ -65,6 +67,11 @@ export async function logActivity(
     typeof input.distanceKm === "number" && Number.isFinite(input.distanceKm)
       ? Math.min(100, Math.max(0, input.distanceKm))
       : null;
+  const quantity =
+    typeof input.quantity === "number" && Number.isFinite(input.quantity)
+      ? Math.min(1000, Math.round(input.quantity))
+      : null;
+  const loggedQuantity = quantity !== null && quantity > 0 ? quantity : null;
   const note = input.note?.trim() ? input.note.trim().slice(0, 280) : null;
   const felt =
     input.felt === "easy" || input.felt === "ok" || input.felt === "hard"
@@ -84,11 +91,12 @@ export async function logActivity(
 
   let label = "Other";
   let minDistanceKm: number | null = null;
+  let minQuantity: number | null = null;
 
   if (goal) {
     const { data: target, error: targetError } = await session.supabase
       .from("targets")
-      .select("goal, label, min_distance_km")
+      .select("goal, label, min_distance_km, min_quantity")
       .eq("user_id", session.userId)
       .eq("goal", goal)
       .eq("active", true)
@@ -108,6 +116,8 @@ export async function logActivity(
 
     label = typeof target.label === "string" ? target.label : goal;
     minDistanceKm = toNumber(target.min_distance_km);
+    const minimum = toNumber(target.min_quantity);
+    minQuantity = minimum !== null && minimum > 0 ? Math.round(minimum) : null;
   }
 
   const isWalk = goal === DISTANCE_GOAL;
@@ -128,6 +138,7 @@ export async function logActivity(
       minutes,
       felt,
       note,
+      quantity: loggedQuantity,
       distance_km: distance,
       source: "manual",
       completed_at: completedAt,
@@ -146,14 +157,53 @@ export async function logActivity(
   const counts =
     !isWalk || minDistanceKm === null || (distance ?? 0) >= minDistanceKm;
 
+  const amount = loggedQuantity !== null ? `${loggedQuantity} × ` : "";
+
+  // A daily minimum is the real rule: say where today stands after this log.
+  const todayTotal =
+    minQuantity !== null && counts ? await quantityOnDay(session, day, goal) : null;
+
+  const progressNote =
+    minQuantity === null || todayTotal === null
+      ? ""
+      : todayTotal >= minQuantity
+        ? ` · day done (${todayTotal}/${minQuantity})`
+        : ` · ${todayTotal}/${minQuantity} today`;
+
   return {
     ok: true,
     id: String(inserted.id),
     counts,
     message: counts
-      ? `Logged ${minutes} min · ${label}`
-      : `Logged ${minutes} min · ${label} (under ${minDistanceKm} km, does not count this week)`,
+      ? `Logged ${amount}${minutes} min · ${label}${progressNote}`
+      : `Logged ${amount}${minutes} min · ${label} (under ${minDistanceKm} km, does not count this week)`,
   };
+}
+
+/** Sum of a goal's quantities on one IST day, for the daily-minimum hint. */
+async function quantityOnDay(
+  session: DbSession,
+  day: string,
+  goal: string | null,
+): Promise<number | null> {
+  const { data, error } = await session.supabase
+    .from("completions")
+    .select("quantity")
+    .eq("user_id", session.userId)
+    .eq("goal", goal)
+    .gte("completed_at", `${day}T00:00:00+05:30`)
+    .lt("completed_at", `${shiftDayKey(day, 1)}T00:00:00+05:30`)
+    .limit(200);
+
+  if (error) {
+    console.error("Could not total today's quantity:", error.message);
+    return null;
+  }
+
+  return ((data ?? []) as { quantity: number | string | null }[]).reduce(
+    (sum, row) => sum + (toNumber(row.quantity) ?? 1),
+    0,
+  );
 }
 
 export type UndoLogResult =
