@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { MonthCalendar } from "@/components/month-calendar";
 import { ProgressRings } from "@/components/progress-rings";
+import { ScreenTimePanel } from "@/components/screen-time-summary";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
 import {
@@ -16,6 +17,13 @@ import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
 import { QUICK_LOG_MAX_DAYS_BACK, quickLogTargets } from "@/lib/quick-log";
 import { formatKm, loadMonthActivity, type MonthActivity } from "@/lib/report";
+import {
+  SCREEN_LIMIT_DEFAULT,
+  loadScreenLimit,
+  loadScreenTimeSince,
+  summariseScreenTime,
+  type ScreenTimeSummary,
+} from "@/lib/screen-time";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import { istDayKey, istWeekLabel, shiftDayKey } from "@/lib/week";
@@ -87,6 +95,24 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
   const month = buildMonth(visibleMonth);
   const streakDays = streak?.days ?? 0;
   const longest = streak?.longest ?? 0;
+
+  // Screen time: 14 fixed IST days plus the limit from `user_settings`.
+  let screenSummary: ScreenTimeSummary | null = null;
+  let screenError: string | null = null;
+
+  try {
+    const [entries, limit] = await Promise.all([
+      loadScreenTimeSince(supabase, user.id, undefined, now),
+      loadScreenLimit(supabase, user.id),
+    ]);
+
+    screenSummary = summariseScreenTime(entries, limit, now);
+  } catch (error) {
+    console.error(error);
+    screenError = "Could not load screen time. Reload the page and try again.";
+  }
+
+  const screenLimit = screenSummary?.limitMinutes ?? SCREEN_LIMIT_DEFAULT;
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
@@ -172,6 +198,19 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
             </div>
           </section>
 
+          {screenSummary ? (
+            <ScreenTimePanel summary={screenSummary} error={screenError} />
+          ) : (
+            screenError && (
+              <p
+                role="alert"
+                className="mt-5 rounded-xl border border-red-300 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+              >
+                {screenError}
+              </p>
+            )
+          )}
+
           <div className="mt-6">
             <MonthCalendar
               month={month}
@@ -180,6 +219,7 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
               todayKey={todayKey}
               minDayKey={minDayKey}
               targets={quickLogTargets(progress?.goals ?? [])}
+              screenLimit={screenLimit}
             />
           </div>
         </div>

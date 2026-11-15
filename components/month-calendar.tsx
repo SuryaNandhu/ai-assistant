@@ -23,6 +23,8 @@ type MonthCalendarProps = {
   /** Earliest day the quick-log shortcut may use. */
   minDayKey: string;
   targets: readonly QuickLogTarget[];
+  /** Daily screen-time limit, shown in the day panel. */
+  screenLimit: number;
 };
 
 /** 0, 1, 2 and "3 or more" shades; all four flip with dark mode. */
@@ -48,6 +50,7 @@ export function MonthCalendar({
   todayKey,
   minDayKey,
   targets,
+  screenLimit,
 }: MonthCalendarProps) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -205,6 +208,8 @@ export function MonthCalendar({
           dayKey={selected}
           completions={selectedDay?.completions ?? []}
           journal={selectedDay?.journal ?? null}
+          screenMinutes={selectedDay?.screenMinutes ?? null}
+          screenLimit={screenLimit}
           todayKey={todayKey}
           minDayKey={minDayKey}
           targets={targets}

@@ -5,9 +5,11 @@ import { BottomNav } from "@/components/bottom-nav";
 import { HomeBoard } from "@/components/home-board";
 import { HomeHeader } from "@/components/home-header";
 import { JournalCard } from "@/components/journal-card";
+import { ProjectCard } from "@/components/project-card";
 import { QuickSaveButton } from "@/components/quick-save";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireUser } from "@/lib/auth";
+import { currentMonth } from "@/lib/calendar";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import {
   isJournalPromptTime,
@@ -16,9 +18,19 @@ import {
 } from "@/lib/journal";
 import { loadWeeklyProgress, type WeeklyProgress } from "@/lib/progress";
 import {
+  loadProject,
+  projectMonthLabel,
+  type ProjectDetail,
+} from "@/lib/project";
+import {
   QUICK_LOG_MAX_DAYS_BACK,
   quickLogTargets,
 } from "@/lib/quick-log";
+import {
+  SCREEN_LIMIT_DEFAULT,
+  loadScreenLimit,
+  loadScreenTimeEntry,
+} from "@/lib/screen-time";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import { istDayKey, shiftDayKey } from "@/lib/week";
@@ -70,6 +82,28 @@ export default async function HomePage() {
     console.error("Could not load today's journal entry:", error);
   }
 
+  // Screen time is a small extra card; if the migration has not run yet the
+  // card still renders with the default limit and no number.
+  let screenMinutes: number | null = null;
+  let screenLimit = SCREEN_LIMIT_DEFAULT;
+  try {
+    [screenMinutes, screenLimit] = await Promise.all([
+      loadScreenTimeEntry(supabase, user.id, todayKey),
+      loadScreenLimit(supabase, user.id),
+    ]);
+  } catch (error) {
+    console.error("Could not load today's screen time:", error);
+  }
+
+  // The monthly project card: a missing table hides the card, never the page.
+  let projectDetail: ProjectDetail | null = null;
+  const thisMonth = currentMonth(now);
+  try {
+    projectDetail = await loadProject(supabase, user.id, thisMonth);
+  } catch (error) {
+    console.error("Could not load this month's project:", error);
+  }
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -80,9 +114,16 @@ export default async function HomePage() {
           todayKey={todayKey}
           minDayKey={minDayKey}
         />
+        <ProjectCard
+          monthLabel={projectMonthLabel(thisMonth)}
+          project={projectDetail?.project ?? null}
+          milestones={projectDetail?.milestones ?? []}
+        />
         <JournalCard
           entry={journalEntry}
           showPrompt={isJournalPromptTime(now)}
+          screenMinutes={screenMinutes}
+          screenLimit={screenLimit}
         />
       </div>
       <QuickSaveButton />

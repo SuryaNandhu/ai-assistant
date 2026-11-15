@@ -8,10 +8,16 @@ import {
   deleteCompletionAction,
   updateCompletionAction,
 } from "@/app/progress/actions";
+import { saveScreenTimeAction } from "@/app/screen-time-actions";
 import { QuickLogSheet } from "@/components/quick-log-sheet";
 import { JOURNAL_MOODS, JOURNAL_NOTE_MAX, moodEmoji } from "@/lib/journal";
 import { QUICK_LOG_MAX_DAYS_BACK, type QuickLogTarget } from "@/lib/quick-log";
 import { formatKm, type CompletionEntry, type DayJournal } from "@/lib/report";
+import {
+  SCREEN_TIME_MAX_MINUTES,
+  formatMinutes,
+  isOverLimit,
+} from "@/lib/screen-time";
 import { DISTANCE_GOAL, FELT_OPTIONS, type Felt } from "@/lib/task";
 import { dayKeyLabel } from "@/lib/week";
 
@@ -304,6 +310,10 @@ type DaySheetProps = {
   dayKey: string;
   completions: readonly CompletionEntry[];
   journal: DayJournal | null;
+  /** Screen time for this day, null when it was not logged. */
+  screenMinutes: number | null;
+  /** The user's daily limit, from `user_settings`. */
+  screenLimit: number;
   todayKey: string;
   /** Earliest day a quick log may use. */
   minDayKey: string;
@@ -313,13 +323,15 @@ type DaySheetProps = {
 
 /**
  * Everything about one day, in a bottom sheet on a phone and a side panel on a
- * wide screen: each completion (with edit and delete), the journal line and a
- * shortcut into the quick-log form for that date.
+ * wide screen: each completion (with edit and delete), the journal line, screen
+ * time and a shortcut into the quick-log form for that date.
  */
 export function DaySheet({
   dayKey,
   completions,
   journal,
+  screenMinutes,
+  screenLimit,
   todayKey,
   minDayKey,
   targets,
@@ -331,11 +343,17 @@ export function DaySheet({
   const [mood, setMood] = useState<number | null>(journal?.mood ?? null);
   const [journalNote, setJournalNote] = useState(journal?.note ?? "");
 
+  const [screenEditing, setScreenEditing] = useState(false);
+  const [screenValue, setScreenValue] = useState(
+    screenMinutes === null ? "" : String(screenMinutes),
+  );
+
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
 
   const [savingJournal, startSavingJournal] = useTransition();
+  const [savingScreen, startSavingScreen] = useTransition();
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -347,6 +365,8 @@ export function DaySheet({
   }, [onClose, quickLogOpen]);
 
   const canQuickLog = dayKey >= minDayKey && dayKey <= todayKey;
+  const canEditScreen = dayKey <= todayKey;
+  const screenOver = isOverLimit(screenMinutes, screenLimit);
   const distanceKm = completions.reduce(
     (total, entry) =>
       entry.goal === DISTANCE_GOAL && entry.distanceKm !== null
@@ -383,6 +403,48 @@ export function DaySheet({
 
       setJournalEditing(false);
       setNotice("Journal saved.");
+      router.refresh();
+    });
+  }
+
+  function beginScreenEdit() {
+    setError(null);
+    setNotice(null);
+    setScreenValue(screenMinutes === null ? "" : String(screenMinutes));
+    setScreenEditing(true);
+  }
+
+  function saveScreen() {
+    if (savingScreen) return;
+
+    const parsed = Number(screenValue);
+
+    if (
+      screenValue.trim() === "" ||
+      !Number.isFinite(parsed) ||
+      parsed < 0 ||
+      parsed > SCREEN_TIME_MAX_MINUTES
+    ) {
+      setError(`Enter minutes between 0 and ${SCREEN_TIME_MAX_MINUTES}.`);
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+
+    startSavingScreen(async () => {
+      const result = await saveScreenTimeAction({
+        day: dayKey,
+        minutes: Math.round(parsed),
+      });
+
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+
+      setScreenEditing(false);
+      setNotice(result.message);
       router.refresh();
     });
   }
@@ -562,6 +624,104 @@ export function DaySheet({
             )}
           </section>
 
+
+          <section className="mt-5">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Screen time
+              </h3>
+              {!screenEditing && screenMinutes !== null && (
+                <button
+                  type="button"
+                  onClick={beginScreenEdit}
+                  className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {screenEditing ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveScreen();
+                }}
+                className="mt-2 rounded-2xl border border-border p-3"
+              >
+                <label htmlFor="day-screen-minutes" className="block text-sm font-medium">
+                  Minutes
+                </label>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    id="day-screen-minutes"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={SCREEN_TIME_MAX_MINUTES}
+                    step={5}
+                    value={screenValue}
+                    onChange={(event) => setScreenValue(event.target.value)}
+                    placeholder="90"
+                    className={INPUT_CLASS}
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingScreen}
+                    className="h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-foreground disabled:opacity-50"
+                  >
+                    {savingScreen ? "Saving…" : "Save"}
+                  </button>
+                </div>
+
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScreenEditing(false);
+                      setError(null);
+                    }}
+                    disabled={savingScreen}
+                    className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <p className="text-xs text-muted-foreground">
+                    Limit {formatMinutes(screenLimit)}
+                  </p>
+                </div>
+              </form>
+            ) : screenMinutes === null ? (
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-2xl border border-dashed border-border p-3">
+                <p className="text-sm text-muted-foreground">Not logged.</p>
+                {canEditScreen && (
+                  <button
+                    type="button"
+                    onClick={beginScreenEdit}
+                    className="h-10 shrink-0 rounded-xl border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    Add
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="mt-2 rounded-2xl border border-border p-3">
+                <p className="text-lg font-semibold tabular-nums">
+                  {formatMinutes(screenMinutes)}
+                </p>
+                <p
+                  className={[
+                    "mt-0.5 text-xs font-medium",
+                    screenOver
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-emerald-700 dark:text-emerald-400",
+                  ].join(" ")}
+                >
+                  {screenOver ? "Over" : "Under"} the {formatMinutes(screenLimit)} limit
+                </p>
+              </div>
+            )}
+          </section>
 
           <div className="mt-5 border-t border-border pt-4">
             <button

@@ -31,6 +31,8 @@ export type MonthDay = {
   dayKey: string;
   completions: CompletionEntry[];
   journal: DayJournal | null;
+  /** Minutes on screens that day, null when it was not logged. */
+  screenMinutes: number | null;
 };
 
 export type MonthTotals = {
@@ -62,6 +64,11 @@ type JournalRow = {
   day: string;
   mood: number | null;
   note: string | null;
+};
+
+type ScreenTimeRow = {
+  day: string;
+  minutes: number | string;
 };
 
 const COMPLETION_COLUMNS =
@@ -105,7 +112,7 @@ export async function loadMonthActivity(
 ): Promise<MonthActivity> {
   const { startDayKey, endDayKey, startIso, endIso } = monthRange(ref);
 
-  const [completionResult, journalResult] = await Promise.all([
+  const [completionResult, journalResult, screenResult] = await Promise.all([
     supabase
       .from("completions")
       .select(COMPLETION_COLUMNS)
@@ -120,6 +127,12 @@ export async function loadMonthActivity(
       .eq("user_id", userId)
       .gte("day", startDayKey)
       .lte("day", endDayKey),
+    supabase
+      .from("screen_time_entries")
+      .select("day, minutes")
+      .eq("user_id", userId)
+      .gte("day", startDayKey)
+      .lte("day", endDayKey),
   ]);
 
   if (completionResult.error) {
@@ -131,6 +144,14 @@ export async function loadMonthActivity(
   // A database without the journal table still gets a calendar, just no moods.
   if (journalResult.error) {
     console.error("Could not load this month's journal:", journalResult.error.message);
+  }
+
+  // Same for screen time: the day panel simply shows nothing to edit.
+  if (screenResult.error) {
+    console.error(
+      "Could not load this month's screen time:",
+      screenResult.error.message,
+    );
   }
 
   const days = new Map<string, MonthDay>();
@@ -155,7 +176,12 @@ export async function loadMonthActivity(
       completedAt: row.completed_at,
     };
 
-    const day = days.get(dayKey) ?? { dayKey, completions: [], journal: null };
+    const day = days.get(dayKey) ?? {
+      dayKey,
+      completions: [],
+      journal: null,
+      screenMinutes: null,
+    };
     day.completions.push(entry);
     days.set(dayKey, day);
 
@@ -167,8 +193,28 @@ export async function loadMonthActivity(
 
   for (const row of (journalResult.data ?? []) as JournalRow[]) {
     const dayKey = String(row.day).slice(0, 10);
-    const day = days.get(dayKey) ?? { dayKey, completions: [], journal: null };
+    const day = days.get(dayKey) ?? {
+      dayKey,
+      completions: [],
+      journal: null,
+      screenMinutes: null,
+    };
     day.journal = { mood: toNumber(row.mood), note: row.note ?? null };
+    days.set(dayKey, day);
+  }
+
+  for (const row of (screenResult.data ?? []) as ScreenTimeRow[]) {
+    const dayKey = String(row.day).slice(0, 10);
+    const minutes = toNumber(row.minutes);
+    if (minutes === null) continue;
+
+    const day = days.get(dayKey) ?? {
+      dayKey,
+      completions: [],
+      journal: null,
+      screenMinutes: null,
+    };
+    day.screenMinutes = minutes;
     days.set(dayKey, day);
   }
 
