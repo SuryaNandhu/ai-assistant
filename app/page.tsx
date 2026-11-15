@@ -31,8 +31,10 @@ import {
   quickLogTargets,
 } from "@/lib/quick-log";
 import { loadMissingScreenDays } from "@/lib/screen-time";
+import { loadGoalCards } from "@/lib/services/quick-add";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
+import type { GoalCard } from "@/lib/targets";
 import { istDayKey, shiftDayKey } from "@/lib/week";
 
 // Auth-gated page: always evaluate the session at request time.
@@ -104,6 +106,15 @@ export default async function HomePage() {
     console.error("Could not load this month's project:", error);
   }
 
+  // The add sheet's goal tab: a missing 007 migration empties the list, which
+  // only hides the goal rows and never breaks Home.
+  let goalCards: GoalCard[] = [];
+  try {
+    goalCards = await loadGoalCards(supabase, user.id);
+  } catch (error) {
+    console.error("Could not load targets for the add sheet:", error);
+  }
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -129,7 +140,7 @@ export default async function HomePage() {
           todayKey={todayKey}
         />
       </div>
-      <QuickSaveButton />
+      <QuickSaveButton goals={goalCards} />
       <BottomNav />
     </main>
   );

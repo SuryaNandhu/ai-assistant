@@ -24,6 +24,29 @@ import {
 
 export type TargetPeriod = "week" | "month";
 
+/** Names the add sheet can give a target; also the longest label kept. */
+export const GOAL_LABEL_MAX = 40;
+
+/** One Home pill per target, so sixteen would stop being a plan. */
+export const CUSTOM_GOAL_MAX_ACTIVE = 15;
+
+/** Default minutes for a target made in the add sheet. */
+export const DEFAULT_TARGET_MINUTES = 30;
+
+/**
+ * One target row as the goal tab shows it: active ones first, paused ones still
+ * listed so they can be resumed, and custom ones flagged so they can be deleted.
+ */
+export type GoalCard = {
+  goal: string;
+  label: string;
+  /** false = paused: the target keeps its history but leaves Home. */
+  active: boolean;
+  /** true = created by the user, so it can also be deleted. */
+  isCustom: boolean;
+};
+
+
 /** One active target plus how much of it is done in the current period. */
 export type GoalProgress = {
   goal: string;

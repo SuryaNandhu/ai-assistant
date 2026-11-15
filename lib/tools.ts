@@ -20,6 +20,7 @@ import {
   PROJECT_UPDATE_MAX,
 } from "@/lib/project";
 import { JOURNAL_NOTE_MAX, loadJournalEntry } from "@/lib/journal";
+import { ITEM_TITLE_MAX } from "@/lib/inbox";
 import {
   SCREEN_LIMIT_MAX,
   SCREEN_LIMIT_MIN,
@@ -35,6 +36,7 @@ import {
   saveProject,
 } from "@/lib/services/projects";
 import { saveLink } from "@/lib/services/saved";
+import { createCustomGoal, createTaskItem } from "@/lib/services/quick-add";
 import { saveScreenLimit, saveScreenTime } from "@/lib/services/screen-time";
 import type { DbSession } from "@/lib/services/session";
 import {
@@ -44,6 +46,7 @@ import {
   skipPickedTask,
 } from "@/lib/services/tasks";
 import { SKIP_REASON_VALUES } from "@/lib/suggestions";
+import { GOAL_LABEL_MAX } from "@/lib/targets";
 import { ENERGY_LEVELS, type Felt } from "@/lib/task";
 import { dayKeyLabel, istDayKey } from "@/lib/week";
 
@@ -558,6 +561,65 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
         if (!result.ok) return failure(result.message);
 
         return { ok: true, message: result.message, draft: result.text };
+      },
+    }),
+
+    add_task: tool({
+      description:
+        "Add a one-off task to the backlog: something to do that is neither a link nor one of my targets.",
+      inputSchema: z.object({
+        title: z
+          .string()
+          .max(ITEM_TITLE_MAX)
+          .describe("Short task name in my words, e.g. Renew passport."),
+        minutes: z
+          .union([z.literal(15), z.literal(30), z.literal(60)])
+          .optional()
+          .describe("Rough time it takes; defaults to 30 minutes."),
+      }),
+      execute: async (input) => {
+        const result = await createTaskItem(session, {
+          title: input.title,
+          estMinutes: input.minutes ?? null,
+        });
+
+        if (!result.ok) return failure(result.message);
+
+        return {
+          ok: true,
+          message: result.message,
+          title: result.item.title,
+          minutes: result.item.est_minutes,
+        };
+      },
+    }),
+
+    add_goal: tool({
+      description:
+        "Create a weekly target of my own, such as gym four times a week. It appears on Home and can be paused or deleted later.",
+      inputSchema: z.object({
+        label: z
+          .string()
+          .max(GOAL_LABEL_MAX)
+          .describe("Name of the target, e.g. Gym."),
+        perWeek: z
+          .number()
+          .int()
+          .min(1)
+          .max(7)
+          .describe("How many times a week, 1 to 7."),
+      }),
+      execute: async (input) => {
+        const result = await createCustomGoal(session, input);
+
+        if (!result.ok) return failure(result.message);
+
+        return {
+          ok: true,
+          message: result.message,
+          goal: result.goal.goal,
+          perWeek: input.perWeek,
+        };
       },
     }),
   };

@@ -467,7 +467,11 @@ export function SavedBoard({
                       disabled={busy}
                       className={PRIMARY_ACTION_CLASS}
                     >
-                      {isVideo(item) ? "Watched" : "Mark read"}
+                      {item.type === "task"
+                        ? "Done"
+                        : isVideo(item)
+                          ? "Watched"
+                          : "Mark read"}
                     </button>
                   ) : (
                     <button

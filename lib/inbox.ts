@@ -28,13 +28,24 @@ export const ITEM_TYPES = ["article", "video", "leetcode", "job", "other"] as co
 
 export type ItemType = (typeof ITEM_TYPES)[number];
 
+/**
+ * A one-off task is a saved item with this type, a title and no link. It is not
+ * in `ITEM_TYPES` because the classifier only ever labels links.
+ */
+export const TASK_ITEM_TYPE = "task";
+
+/** Longest title kept for a saved item or a one-off task. */
+export const ITEM_TITLE_MAX = 200;
+
 export const ITEM_TYPE_LABELS: Record<string, string> = {
   article: "Article",
   video: "Video",
   leetcode: "LeetCode",
   job: "Job",
   other: "Other",
+  task: "Task",
 };
+
 
 /** Human label for an item type, falling back to a prettified raw value. */
 export function itemTypeLabel(type: string | null | undefined): string {

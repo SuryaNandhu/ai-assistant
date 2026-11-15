@@ -9,7 +9,9 @@ import { requireUser } from "@/lib/auth";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import { INBOX_ITEM_COLUMNS, type GoalOption, type InboxItem } from "@/lib/inbox";
 import { loadActiveGoals } from "@/lib/inbox-save";
+import { loadGoalCards } from "@/lib/services/quick-add";
 import { createClient } from "@/lib/supabase/server";
+import type { GoalCard } from "@/lib/targets";
 
 // Auth-gated page: always evaluate the session at request time.
 export const dynamic = "force-dynamic";
@@ -57,13 +59,22 @@ export default async function SavedPage() {
     loadError = errorMessage(error);
   }
 
+  // The add sheet lists paused targets too; a missing 007 migration just leaves
+  // that list empty instead of failing the page.
+  let goalCards: GoalCard[] = [];
+  try {
+    goalCards = await loadGoalCards(supabase, user.id);
+  } catch (error) {
+    console.error("Could not load targets for the add sheet:", error);
+  }
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
       <AppHeader email={user.email} />
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <SavedBoard items={items} goals={goals} loadError={loadError} />
       </div>
-      <QuickSaveButton />
+      <QuickSaveButton goals={goalCards} />
       <BottomNav />
     </main>
   );
