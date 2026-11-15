@@ -50,8 +50,9 @@ type ScreenTimePromptProps = {
 
 /**
  * Screen time belongs to a finished day, so Home asks about the oldest missing
- * day out of the last three, one at a time. "Not now" hides the card until
- * tomorrow; once every day is logged the card disappears on its own.
+ * day out of the last three — never earlier than the first day logged — one at
+ * a time. "Not now" hides the card until tomorrow; once every askable day is
+ * logged the card disappears on its own.
  */
 export function ScreenTimePrompt({ days, todayKey }: ScreenTimePromptProps) {
   const router = useRouter();

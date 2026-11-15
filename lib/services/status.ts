@@ -1,5 +1,8 @@
 import { loadWeeklyProgress } from "@/lib/progress";
-import { loadMissingScreenDays } from "@/lib/screen-time";
+import {
+  loadScreenTimeTracking,
+  type ScreenTimeTracking,
+} from "@/lib/screen-time";
 import type { DbSession } from "@/lib/services/session";
 import { loadStreak } from "@/lib/streak";
 import { istDayKey, shiftDayKey } from "@/lib/week";
@@ -13,7 +16,9 @@ export type StatusSummary = {
   todayCompletions: number;
   /** This week's targets with how many completions count toward each. */
   week: { goal: string; done: number; perWeek: number }[];
-  /** Completed days in the last three with no screen time, oldest first. */
+  /** First day with screen time, or null if nothing is logged yet. */
+  screenTrackingStart: string | null;
+  /** Completed days since tracking began with no screen time, oldest first. */
   missingScreenDays: string[];
 };
 
@@ -29,7 +34,7 @@ export async function loadStatus(
   const todayKey = istDayKey(now);
   const tomorrowKey = shiftDayKey(todayKey, 1);
 
-  const [progress, streak, todayCount, missingScreenDays] = await Promise.all([
+  const [progress, streak, todayCount, tracking] = await Promise.all([
     loadWeeklyProgress(session.supabase, session.userId, now),
     loadStreak(session.supabase, session.userId, now),
     session.supabase
@@ -38,10 +43,10 @@ export async function loadStatus(
       .eq("user_id", session.userId)
       .gte("completed_at", `${todayKey}T00:00:00+05:30`)
       .lt("completed_at", `${tomorrowKey}T00:00:00+05:30`),
-    loadMissingScreenDays(session.supabase, session.userId, now).catch(
+    loadScreenTimeTracking(session.supabase, session.userId, now).catch(
       (error: unknown) => {
         console.error("Could not load missing screen-time days:", error);
-        return [] as string[];
+        return { start: null, missing: [] } satisfies ScreenTimeTracking;
       },
     ),
   ]);
@@ -60,6 +65,7 @@ export async function loadStatus(
       done: goal.done,
       perWeek: goal.perWeek,
     })),
-    missingScreenDays,
+    screenTrackingStart: tracking.start,
+    missingScreenDays: tracking.missing,
   };
 }

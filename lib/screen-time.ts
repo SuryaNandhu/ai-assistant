@@ -18,8 +18,9 @@ export const SCREEN_LIMIT_OPTIONS = [60, 90, 120, 150, 180, 240] as const;
 export const SCREEN_TIME_MAX_MINUTES = 1440;
 
 /**
- * Screen time describes a day that has ended, so Home asks about the last three
- * completed days (yesterday and the two before it) and never about today.
+ * Screen time describes a day that has ended, and tracking only starts once the
+ * user logs the first entry: Home never asks about days before that first day.
+ * Today is never asked about either.
  */
 export const SCREEN_PROMPT_DAYS = 3;
 
@@ -164,49 +165,107 @@ export async function loadScreenLimit(
 }
 
 /**
+ * Which completed days still need a number, plus the day tracking began.
+ *
+ * - `start` is the earliest day with a row in `screen_time_entries`; null means
+ *   nothing has been logged yet, so the only day worth asking about is
+ *   yesterday — older days were never being tracked.
+ * - `missing` only ever contains days on or after `start`, inside the last
+ *   `SCREEN_PROMPT_DAYS` completed days, oldest first.
+ */
+export type ScreenTimeTracking = {
+  /** `YYYY-MM-DD` of the first logged day, or null before the first entry. */
+  start: string | null;
+  missing: string[];
+};
+
+/**
  * The last `SCREEN_PROMPT_DAYS` completed days (yesterday backwards) that have
- * no screen time yet, oldest first. Today is never included: a day only counts
- * once it is over.
+ * no screen time yet, oldest first, never earlier than the first logged day.
+ * Today is never included: a day only counts once it is over.
  */
 export async function loadMissingScreenDays(
   supabase: SupabaseClient,
   userId: string,
   now: Date = new Date(),
 ): Promise<string[]> {
-  const todayKey = istDayKey(now);
-  const oldestKey = shiftDayKey(todayKey, -SCREEN_PROMPT_DAYS);
-
-  const { data, error } = await supabase
-    .from("screen_time_entries")
-    .select("day, minutes")
-    .eq("user_id", userId)
-    .gte("day", oldestKey)
-    .lt("day", todayKey);
-
-  if (error) {
-    throw new Error(`Could not load screen time: ${error.message}`);
-  }
-
-  const logged = new Set(
-    ((data ?? []) as { day: string; minutes: number | string | null }[])
-      .filter((row) => row.minutes !== null)
-      .map((row) => String(row.day).slice(0, 10)),
-  );
-
-  return missingScreenDays(logged, now);
+  const { missing } = await loadScreenTimeTracking(supabase, userId, now);
+  return missing;
 }
 
-/** Pure half of `loadMissingScreenDays`, oldest missing day first. */
+/**
+ * Reads the first logged day and the days still missing, in one place so the
+ * Home card and the `get_status` tool cannot disagree about what is missing.
+ */
+export async function loadScreenTimeTracking(
+  supabase: SupabaseClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<ScreenTimeTracking> {
+  const todayKey = istDayKey(now);
+  const windowStartKey = shiftDayKey(todayKey, -SCREEN_PROMPT_DAYS);
+
+  const first = await supabase
+    .from("screen_time_entries")
+    .select("day")
+    .eq("user_id", userId)
+    .order("day", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (first.error) {
+    throw new Error(`Could not load screen time: ${first.error.message}`);
+  }
+
+  const start = first.data?.day ? String(first.data.day).slice(0, 10) : null;
+  const logged = new Set<string>();
+
+  if (start !== null) {
+    // Only the part of the window that overlaps tracking has to be read.
+    const fromKey = start > windowStartKey ? start : windowStartKey;
+
+    const { data, error } = await supabase
+      .from("screen_time_entries")
+      .select("day")
+      .eq("user_id", userId)
+      .gte("day", fromKey)
+      .lt("day", todayKey);
+
+    if (error) {
+      throw new Error(`Could not load screen time: ${error.message}`);
+    }
+
+    for (const row of (data ?? []) as { day: string }[]) {
+      logged.add(String(row.day).slice(0, 10));
+    }
+  }
+
+  return { start, missing: missingScreenDays(logged, now, start) };
+}
+
+/**
+ * Pure half of `loadScreenTimeTracking`, oldest missing day first. With no
+ * tracking start yet, yesterday is the only day asked about.
+ */
 export function missingScreenDays(
   logged: Iterable<string>,
   now: Date = new Date(),
+  trackingStart: string | null = null,
 ): string[] {
   const todayKey = istDayKey(now);
   const days = new Set(logged);
+
+  if (trackingStart === null) {
+    const yesterdayKey = shiftDayKey(todayKey, -1);
+    return days.has(yesterdayKey) ? [] : [yesterdayKey];
+  }
+
   const missing: string[] = [];
 
   for (let offset = SCREEN_PROMPT_DAYS; offset >= 1; offset -= 1) {
     const dayKey = shiftDayKey(todayKey, -offset);
+    // Days before the first entry were never tracked, so never ask for them.
+    if (dayKey < trackingStart) continue;
     if (!days.has(dayKey)) missing.push(dayKey);
   }
 
