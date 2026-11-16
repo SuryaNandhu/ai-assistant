@@ -85,6 +85,8 @@ create table if not exists public.targets (
   est_minutes integer check (est_minutes is null or est_minutes between 1 and 600),
   energy text not null default 'normal' check (energy in ('low', 'normal', 'high')),
   is_custom boolean not null default false,
+  -- false keeps the goal out of the picker (walk/run); quick log still works.
+  suggestable boolean not null default true,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (user_id, goal)
@@ -421,6 +423,7 @@ group by
 --
 -- job_search is a daily-minimum rule: three search days a week, and a day only
 -- counts once three applications were logged. resume_update is monthly.
+-- walk_run is not suggestable: it belongs in quick log, not the picker.
 -- ---------------------------------------------------------------------------
 insert into public.targets (
   user_id,
@@ -430,7 +433,9 @@ insert into public.targets (
   min_distance_km,
   period,
   min_quantity,
-  est_minutes
+  est_minutes,
+  energy,
+  suggestable
 )
 select
   u.id,
@@ -440,18 +445,30 @@ select
   v.min_distance_km,
   v.period,
   v.min_quantity,
-  v.est_minutes
+  v.est_minutes,
+  v.energy,
+  v.suggestable
 from auth.users u
 cross join (
   values
-    ('leetcode',      'LeetCode',            3, null::numeric, 'week',  null::integer, null::integer),
-    ('ai_learning',   'AI learning',         3, null::numeric, 'week',  null::integer, null::integer),
-    ('bi',            'Tableau / Power BI',  2, null::numeric, 'week',  null::integer, null::integer),
-    ('job_search',    'Job search',          3, null::numeric, 'week',  3,             45),
-    ('walk_run',      '5 km walk/run',       3, 5::numeric,    'week',  null::integer, null::integer),
-    ('resume_update', 'Update resume',       1, null::numeric, 'month', null::integer, 60)
-) as v (goal, label, per_week, min_distance_km, period, min_quantity, est_minutes)
+    ('leetcode',      'LeetCode',            3, null::numeric, 'week',  null::integer, null::integer, 'normal', true),
+    ('ai_learning',   'AI learning',         3, null::numeric, 'week',  null::integer, null::integer, 'normal', true),
+    ('bi',            'Tableau / Power BI',  2, null::numeric, 'week',  null::integer, null::integer, 'normal', true),
+    ('job_search',    'Job search',          3, null::numeric, 'week',  3,             45,             'normal', true),
+    ('walk_run',      '5 km walk/run',       3, 5::numeric,    'week',  null::integer, null::integer, 'normal', false),
+    ('resume_update', 'Update resume',       1, null::numeric, 'month', null::integer, 60,             'normal', true)
+) as v (goal, label, per_week, min_distance_km, period, min_quantity, est_minutes, energy, suggestable)
 on conflict (user_id, goal) do nothing;
+
+-- Data fixes 009 also applies to an older database: walk/run stays out of the
+-- picker, LeetCode is normal energy, and every job posting files under
+-- job_search. Only these columns change.
+update public.targets set suggestable = false where goal = 'walk_run';
+update public.targets set energy = 'normal' where goal = 'leetcode';
+update public.items
+   set goal = 'job_search'
+ where type = 'job'
+   and goal is distinct from 'job_search';
 
 -- Ask PostgREST (the Supabase API layer) to reload its schema cache.
 notify pgrst, 'reload schema';
