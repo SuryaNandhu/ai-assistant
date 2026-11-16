@@ -10,6 +10,7 @@ import {
   ITEM_TYPES,
   MAX_TAG_COUNT,
   MAX_TAG_LENGTH,
+  normalizeGoalForType,
   normalizeTags,
   type InboxItem,
 } from "@/lib/inbox";
@@ -84,11 +85,14 @@ export async function updateItemAction(input: unknown): Promise<ItemResult> {
 
   const { id, goal, tags, ...rest } = parsed.data;
 
+  // A job posting is job search, even if the sheet sent another goal.
+  const nextGoal = normalizeGoalForType(rest.type, goal);
+
   const { data, error } = await session.supabase
     .from("items")
     .update({
       ...rest,
-      goal: goal || null,
+      goal: nextGoal,
       tags: normalizeTags(tags),
     })
     .eq("id", id)

@@ -500,6 +500,20 @@ export function linkDefaults(url: URL): LinkDefaults {
   return { type: "article", goal: null, est_minutes: 8, energy: "low" };
 }
 
+/**
+ * A job posting always belongs to job search. The rule-based defaults, the AI
+ * pass and the edit sheet all go through here, so a stray classification can
+ * never file one under ai_learning or any other goal.
+ */
+export function normalizeGoalForType(
+  type: string | null | undefined,
+  goal: string | null | undefined,
+): string | null {
+  if (type === "job") return "job_search";
+  const clean = goal?.trim();
+  return clean ? clean : null;
+}
+
 /** A safe href for rendering: only http(s) links are clickable. */
 export function safeHref(url: string | null | undefined): string | null {
   if (!url) return null;

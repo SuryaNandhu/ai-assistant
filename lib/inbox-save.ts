@@ -8,6 +8,7 @@ import {
   INBOX_ITEM_COLUMNS,
   isYoutubeUrl,
   linkDefaults,
+  normalizeGoalForType,
   normalizeUrl,
   parseHttpUrl,
   sourceDomainOf,
@@ -130,7 +131,10 @@ export async function saveInboxItem(
   }
 
   const defaults = linkDefaults(parsedUrl);
-  const goal = input.goal?.trim() || defaults.goal;
+  const goal = normalizeGoalForType(
+    defaults.type,
+    input.goal?.trim() || defaults.goal,
+  );
   const note = input.note?.trim() ? input.note.trim().slice(0, 1000) : null;
 
   const { data, error } = await supabase
@@ -220,16 +224,39 @@ export async function enrichInboxItem(args: {
       update.title = title.trim().slice(0, 300);
     }
 
+    const chosenGoal = args.chosenGoal?.trim() || null;
+
+    // Rule-based values first, then the AI may refine them. The goal is combined
+    // from the same two passes, so the job rule sees the final type.
+    let nextType = rules.type;
+    let nextGoal = chosenGoal ?? rules.goal;
+
+    if (ai) {
+      if (rules.type === "article") nextType = ai.type;
+      if (!chosenGoal) nextGoal = ai.goal ?? rules.goal;
+    }
+
+    // A job posting is always job search, whatever the model or the form said.
+    nextGoal = normalizeGoalForType(nextType, nextGoal);
+
+    // What `saveInboxItem` wrote a moment ago, so an unchanged goal is not
+    // rewritten and a user-chosen goal for a non-job link is left alone.
+    const savedGoal = normalizeGoalForType(
+      rules.type,
+      chosenGoal ?? rules.goal,
+    );
+
     if (ai) {
       // Host-driven types (video / leetcode / job) are more reliable than the
       // model's guess; a generic link may be re-typed.
       if (rules.type === "article") update.type = ai.type;
-      if (!args.chosenGoal) update.goal = ai.goal ?? rules.goal;
       update.est_minutes = ai.est_minutes;
       update.energy = ai.energy;
       // No AI answer (or no tags in it) means the column keeps its '{}'.
       if (ai.tags.length > 0) update.tags = ai.tags;
     }
+
+    if (nextGoal !== savedGoal) update.goal = nextGoal;
 
     if (Object.keys(update).length === 0) return;
 

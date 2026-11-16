@@ -139,7 +139,12 @@ export function ItemEditSheet({
           <select
             id="item-type"
             value={type}
-            onChange={(event) => setType(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setType(next);
+              // A job posting is always job search; the server enforces this too.
+              if (next === "job") setGoal("job_search");
+            }}
             className={INPUT_CLASS}
           >
             {ITEM_TYPES.map((option) => (
