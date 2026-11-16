@@ -78,7 +78,9 @@ export const GENERIC_TASKS: readonly GenericTask[] = [
     goal: "leetcode",
     title: "Solve one LeetCode problem (easy or medium)",
     minutes: 30,
-    energy: "high",
+    // The database target also says normal (migration 009), so the plan and the
+    // suggestion agree even on a project seeded before that fix.
+    energy: "normal",
   },
   {
     goal: "ai_learning",
@@ -118,6 +120,37 @@ export const GENERIC_TASKS: readonly GenericTask[] = [
 export function findGenericTask(goal: string | null): GenericTask | undefined {
   if (!goal) return undefined;
   return GENERIC_TASKS.find((task) => task.goal === goal);
+}
+
+/**
+ * The idea the picker offers for a goal, whether or not the catalog knows it.
+ * Built-in goals keep their catalogue title and plan; a custom goal gets a
+ * plain "work on it" sitting, so the picker can still suggest it when the
+ * backlog is empty.
+ */
+export function genericTaskFor(
+  goal: string,
+  options: {
+    label?: string | null;
+    minutes?: number | null;
+    energy?: Energy | null;
+  } = {},
+): GenericTask {
+  const template = findGenericTask(goal);
+
+  return {
+    goal,
+    title: template?.title ?? `Work on “${goalLabel(goal, options.label)}”`,
+    minutes: options.minutes ?? template?.minutes ?? DEFAULT_MINUTES,
+    energy: options.energy ?? template?.energy ?? DEFAULT_ENERGY,
+  };
+}
+
+/** Shared wording for "this slot has nothing", used by the chat tool. */
+export function noFitMessage(minutes: number, energy: Energy): string {
+  return `Nothing fits ${minutes} minutes at ${ENERGY_LABELS[
+    energy
+  ].toLowerCase()} energy right now. Try a longer slot or a bit more energy.`;
 }
 
 export type TaskSource = "item" | "generic";

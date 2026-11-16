@@ -162,27 +162,27 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     pick_task: tool({
       description:
-        "Pick one task to do now from the backlog, given the time and energy the user has.",
+        "Pick one task to do now — a saved item or a built-in idea for one of the user's goals — given the time and energy they have.",
       inputSchema: z.object({
         minutes: z.union([z.literal(15), z.literal(30), z.literal(60)]),
         energy: z.enum(ENERGY_LEVELS),
         mode: z
           .enum(["smart", "surprise"])
           .default("smart")
-          .describe("smart weights the user's goals; surprise ignores them."),
+          .describe(
+            "smart follows the goals that are behind; surprise picks at random.",
+          ),
       }),
       execute: async (input) => {
-        const task = await pickTaskForSession(session, {
+        const result = await pickTaskForSession(session, {
           mode: input.mode,
           minutes: input.minutes,
           energy: input.energy,
         });
 
-        if (!task) {
-          return failure(
-            `Nothing in the backlog fits ${input.minutes} minutes at ${input.energy} energy.`,
-          );
-        }
+        if (!result.ok) return failure(result.message);
+
+        const task = result.task;
 
         return {
           ok: true,

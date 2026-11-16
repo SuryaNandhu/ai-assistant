@@ -67,6 +67,8 @@ export type GoalProgress = {
   energy: Energy;
   /** True for goals the user invented in the add sheet. */
   isCustom: boolean;
+  /** false = keep it out of the picker (walk/run); quick log still works. */
+  suggestable: boolean;
 };
 
 export type TargetProgressSet = {
@@ -91,6 +93,7 @@ export type TargetRow = {
   est_minutes: number | string | null;
   energy: string | null;
   is_custom: boolean | null;
+  suggestable: boolean | null;
 };
 
 export type CompletionSlice = {
@@ -217,6 +220,8 @@ export function targetProgress(
       estMinutes !== null && estMinutes > 0 ? Math.round(estMinutes) : null,
     energy: toEnergy(target.energy),
     isCustom: target.is_custom === true,
+    // Older projects without 009 default to suggestable, matching the column.
+    suggestable: target.suggestable !== false,
   };
 }
 
@@ -245,7 +250,7 @@ export async function loadTargetProgress(
   const { data: targetData, error: targetError } = await supabase
     .from("targets")
     .select(
-      "goal, label, per_week, period, min_distance_km, min_quantity, est_minutes, energy, is_custom",
+      "goal, label, per_week, period, min_distance_km, min_quantity, est_minutes, energy, is_custom, suggestable",
     )
     .eq("user_id", userId)
     .eq("active", true)
@@ -254,7 +259,7 @@ export async function loadTargetProgress(
 
   if (targetError) {
     throw new Error(
-      `Could not load your targets: ${targetError.message}. On a fresh project, run supabase/migrations/007_job_rules_custom_goals.sql.`,
+      `Could not load your targets: ${targetError.message}. On a fresh project, run supabase/migrations/007_job_rules_custom_goals.sql and 009_picker_fix.sql.`,
     );
   }
 

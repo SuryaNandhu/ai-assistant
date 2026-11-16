@@ -17,6 +17,7 @@ import {
   ENERGY_LABELS,
   ENERGY_LEVELS,
   TIME_OPTIONS,
+  noFitMessage,
   type Energy,
   type Felt,
   type PickMode,
@@ -320,9 +321,7 @@ export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
           <div className="rounded-2xl border border-dashed border-border p-4">
             <p className="text-sm font-medium">Nothing fits that slot</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              No todo items match {minutes} min at{" "}
-              {ENERGY_LABELS[energy].toLowerCase()} energy. Try a longer time or
-              more energy.
+              {noFitMessage(minutes, energy)}
             </p>
           </div>
         ) : (

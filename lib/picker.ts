@@ -7,6 +7,11 @@
  *
  *   score = goal gap × preference × fit × skip penalty
  *
+ * The pick itself is goal-first: smart picks a goal (weighted by how far behind
+ * it is, with a 15% side door for untargeted backlog), then chooses within that
+ * goal between the built-in idea and the saved links. Surprise skips the goal
+ * step and draws uniformly from everything eligible.
+ *
  * - goal gap:   a weekly target that is behind pulls harder (as before).
  * - preference: smoothed per-tag and per-type history of done / liked /
  *               skipped-as-not-interested.
@@ -77,6 +82,83 @@ export function goalGapWeight(
   if (!Number.isFinite(perWeek) || perWeek <= 0) return 1;
   const behind = Math.max(0, perWeek - done) / perWeek;
   return mode === "smart" ? 1 + 3 * behind : 1 + behind;
+}
+
+/**
+ * The pseudo-goal that holds backlog items no active target covers (links with
+ * no goal, paused goals, walk/run). It is a goal-shaped bucket only, never a
+ * real target.
+ */
+export const OTHER_GOAL = "other";
+
+/** Share of smart picks handed to that bucket, so untargeted links still show. */
+export const OTHER_SHARE = 0.15;
+
+/**
+ * Share of in-goal picks given to the built-in idea rather than a saved link.
+ * Without this the picker quietly turns back into "newest article wins".
+ */
+export const GENERIC_SHARE = 0.35;
+
+export type GoalChoice = {
+  goal: string;
+  /** Higher means more likely; use `goalGapWeight` for targets. */
+  weight: number;
+};
+
+/**
+ * Chooses the goal for one smart pick. The pseudo-goal "other" takes 15% of
+ * picks; the rest is shared out by how far behind each goal is. `null` means
+ * neither a goal nor the other bucket has anything to offer.
+ */
+export function chooseGoal(
+  goals: readonly GoalChoice[],
+  hasOther: boolean,
+  random: () => number = Math.random,
+): string | null {
+  const weighted = goals.filter(
+    (entry) => Number.isFinite(entry.weight) && entry.weight > 0,
+  );
+
+  if (weighted.length === 0) return hasOther ? OTHER_GOAL : null;
+  if (hasOther && random() < OTHER_SHARE) return OTHER_GOAL;
+
+  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  let threshold = random() * total;
+
+  for (const entry of weighted) {
+    threshold -= entry.weight;
+    if (threshold < 0) return entry.goal;
+  }
+
+  return weighted[weighted.length - 1].goal;
+}
+
+/**
+ * Chooses inside one goal. The built-in idea is offered about a third of the
+ * time, so a big backlog cannot bury it; otherwise the scored links decide.
+ */
+export function chooseInGoal<T>(
+  scored: readonly Scored<T>[],
+  generic: Scored<T> | null,
+  random: () => number = Math.random,
+): Scored<T> | null {
+  if (scored.length === 0) return generic;
+  if (generic && random() < GENERIC_SHARE) return generic;
+  return chooseCandidate(scored, "smart", random);
+}
+
+/** One uniform pick from everything eligible — what "surprise" means. */
+export function chooseUniform<T>(
+  entries: readonly T[],
+  random: () => number = Math.random,
+): T | null {
+  if (entries.length === 0) return null;
+  const index = Math.min(
+    entries.length - 1,
+    Math.floor(random() * entries.length),
+  );
+  return entries[index];
 }
 
 

@@ -3,15 +3,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { revisitDueAt } from "@/lib/inbox";
 import {
   FEEDBACK_WINDOW_DAYS,
+  OTHER_GOAL,
   TIME_GRACE,
   buildPreferences,
   calibrationFactors,
   calibratedMinutes,
-  chooseCandidate,
+  chooseGoal,
+  chooseInGoal,
+  chooseUniform,
   goalGapWeight,
   scoreSources,
   type CandidateFeatures,
   type FeedbackEvent,
+  type GoalChoice,
   type Scored,
   type ScoreFactors,
 } from "@/lib/picker";
@@ -26,8 +30,8 @@ import { remainingQuantity } from "@/lib/quick-log";
 import { effectiveOutcome, toSuggestionMode } from "@/lib/suggestions";
 import {
   DEFAULT_MINUTES,
-  GENERIC_TASKS,
   energyRank,
+  genericTaskFor,
   goalLabel,
   taskKey,
   type Energy,
@@ -93,6 +97,8 @@ type Source = {
   features: CandidateFeatures;
   tags: string[];
   estMinutes: number;
+  /** The goal bucket this candidate belongs to; `OTHER_GOAL` for untargeted. */
+  bucket: string;
 };
 
 function itemMinutes(item: ItemRow): number {
@@ -121,17 +127,38 @@ function skippedAt(item: ItemRow): Date | null {
 /**
  * Time and energy still gate what can be shown, but a soft 50% time grace
  * replaces the old hard cut-off: something a little over the slot is still
- * allowed, just down-weighted by `fit`.
+ * allowed, just down-weighted by `fit`. `energy` is the level being tried, so
+ * the caller can retry one step up when a slot comes back empty.
  */
 function isEligible(
   item: ItemRow,
   request: PickRequest,
   now: Date,
   minutes: number,
+  energy: Energy,
 ): boolean {
   if (!revisitDueAt(item.revisit_at, now)) return false;
   if (minutes > request.minutes * TIME_GRACE) return false;
-  return energyRank(itemEnergy(item)) <= energyRank(request.energy);
+  return energyRank(itemEnergy(item)) <= energyRank(energy);
+}
+
+/**
+ * Which goal bucket an item belongs to. An item whose goal has no suggestable
+ * target (no goal, walk/run, a paused goal, an older key) joins "other" so it
+ * can still be picked without pretending it is part of the plan.
+ */
+function itemBucket(
+  goal: string | null,
+  suggestableGoals: ReadonlySet<string>,
+): string {
+  return goal && suggestableGoals.has(goal) ? goal : OTHER_GOAL;
+}
+
+/** One step up (low → normal → high); null at the top. */
+function nextEnergy(energy: Energy): Energy | null {
+  if (energy === "low") return "normal";
+  if (energy === "normal") return "high";
+  return null;
 }
 
 /** One line explaining the pick, e.g. "LeetCode is 0/3 this week". */
@@ -245,6 +272,7 @@ function itemSource(
   progress: WeeklyProgress,
   request: PickRequest,
   calibration: ReadonlyMap<string, number>,
+  suggestableGoals: ReadonlySet<string>,
 ): Source {
   const target = findGoalProgress(progress, item.goal);
   const label = goalLabel(item.goal, target?.label);
@@ -275,6 +303,7 @@ function itemSource(
     },
     tags,
     estMinutes: est,
+    bucket: itemBucket(item.goal, suggestableGoals),
     features: {
       type,
       tags,
@@ -291,15 +320,11 @@ function itemSource(
 
 function genericSource(
   template: GenericTask,
-  progress: WeeklyProgress,
+  target: GoalProgress,
   request: PickRequest,
   calibration: ReadonlyMap<string, number>,
-  /** The target's own minutes/energy, which win over the catalog defaults. */
-  planned: { minutes: number; energy: Energy },
 ): Source {
-  const target = findGoalProgress(progress, template.goal);
-  const label = goalLabel(template.goal, target?.label);
-  const minutes = calibratedMinutes(planned.minutes, template.goal, calibration);
+  const minutes = calibratedMinutes(template.minutes, template.goal, calibration);
 
   return {
     task: {
@@ -310,29 +335,52 @@ function genericSource(
       title: template.title,
       type: "generic",
       goal: template.goal,
-      goalLabel: label,
+      goalLabel: target.label,
       minutes,
-      energy: planned.energy,
+      energy: template.energy,
       url: null,
-      reason: reasonFor(label, target),
-      minQuantity: target?.minQuantity ?? null,
-      quantityRemaining: target ? remainingQuantity(target) : null,
+      // Say where the idea came from; the goal line alone reads like a saved
+      // article and hides that the picker can suggest built-in tasks.
+      reason: `Built-in idea · ${reasonFor(target.label, target)}`,
+      minQuantity: target.minQuantity,
+      quantityRemaining: remainingQuantity(target),
     },
     tags: [],
-    estMinutes: planned.minutes,
+    estMinutes: template.minutes,
+    bucket: template.goal,
     features: {
       // A generic idea is its own activity, so the goal is its learning key.
       type: template.goal,
       tags: [],
-      energy: planned.energy,
+      energy: template.energy,
       minutes,
       availableMinutes: request.minutes,
       lastSkippedAt: null,
-      goalWeight: target
-        ? goalGapWeight(target.perWeek, target.done, request.mode)
-        : 1,
+      goalWeight: goalGapWeight(target.perWeek, target.done, request.mode),
     },
   };
+}
+
+/**
+ * The built-in idea for one goal, if it fits the slot and the energy being
+ * tried. Custom goals get a synthesized "work on it" idea from `genericTaskFor`.
+ */
+function genericSourceFor(
+  target: GoalProgress,
+  request: PickRequest,
+  energy: Energy,
+  calibration: ReadonlyMap<string, number>,
+): Source | null {
+  const template = genericTaskFor(target.goal, {
+    label: target.label,
+    minutes: target.estMinutes,
+    energy: target.energy,
+  });
+
+  if (template.minutes > request.minutes) return null;
+  if (energyRank(template.energy) > energyRank(energy)) return null;
+
+  return genericSource(template, target, request, calibration);
 }
 
 /**
@@ -356,6 +404,8 @@ async function logSuggestion(
   source: Source,
   scored: Scored<Source>,
   now: Date,
+  /** True when the slot was empty at the requested energy and one step up won. */
+  relaxed: boolean,
 ): Promise<string> {
   const { task } = source;
 
@@ -381,6 +431,8 @@ async function logSuggestion(
         score: Number(scored.score.toFixed(3)),
         factors: roundFactors(scored.factors),
         reason: task.reason,
+        bucket: source.bucket,
+        relaxed_energy: relaxed,
       },
     })
     .select("id")
@@ -406,14 +458,16 @@ function roundFactors(factors: ScoreFactors): Record<string, number> {
 /**
  * Chooses one task for the user and logs it.
  *
- * "smart" looks at real backlog items first and prefers the goal that is
- * furthest behind this week; "surprise" mixes items and generic ideas. Both
- * fall back to the generic catalog when the backlog has nothing that fits and
- * return null when even the catalog has no task for this time/energy slot.
+ * "smart" picks a goal first, weighted by how far behind it is this week, with
+ * a 15% side door for backlog items no target covers; inside that goal it
+ * offers the built-in idea about a third of the time and otherwise the best
+ * saved link. "surprise" ignores the plan and draws uniformly from everything
+ * eligible. If nothing fits the requested energy, one step up is tried once and
+ * the reason says so; null means even that came back empty.
  *
- * The scoring itself lives in `lib/picker.ts`; this function only gathers the
- * inputs (items, weekly progress, feedback history, calibration) and records
- * what was shown.
+ * The selection and scoring live in `lib/picker.ts`; this function only gathers
+ * the inputs (items, targets, feedback history, calibration) and records what
+ * was shown.
  */
 export async function pickTask(
   context: PickContext,
@@ -430,62 +484,107 @@ export async function pickTask(
   ]);
 
   const preferences = buildPreferences(feedback, now);
+  const scoreContext = { now, preferences };
 
-  const itemSources = items
-    .map((item) => ({
-      item,
-      minutes: calibratedMinutes(itemMinutes(item), itemType(item), calibration),
-    }))
-    .filter(({ item, minutes }) => isEligible(item, request, now, minutes))
-    .map(({ item }) => itemSource(item, progress, request, calibration))
-    .filter((source) => !exclude.has(source.task.key));
+  // Only goals the user can still be nudged toward get a bucket. walk/run stays
+  // out of the picker's plan but its saved items remain pickable via "other".
+  const goalTargets = progress.goals.filter((target) => target.suggestable);
+  const suggestableGoals = new Set(goalTargets.map((target) => target.goal));
 
-  // A target may ask for more time or a different energy than the catalog
-  // default (job search: 45 minutes). The slot still has the final say.
-  const genericSources = GENERIC_TASKS.map((template) => {
-    const target = findGoalProgress(progress, template.goal);
+  const relaxedEnergy = nextEnergy(request.energy);
+  const energies: Energy[] = relaxedEnergy
+    ? [request.energy, relaxedEnergy]
+    : [request.energy];
 
-    return {
-      template,
-      minutes: target?.estMinutes ?? template.minutes,
-      energy: target?.energy ?? template.energy,
-    };
-  })
-    .filter(
-      ({ minutes, energy }) =>
-        minutes <= request.minutes &&
-        energyRank(energy) <= energyRank(request.energy),
-    )
-    .map(({ template, minutes, energy }) =>
-      genericSource(template, progress, request, calibration, {
-        minutes,
-        energy,
-      }),
-    )
-    .filter((source) => !exclude.has(source.task.key));
+  for (const [index, energy] of energies.entries()) {
+    const relaxed = index > 0;
 
-  const pool =
-    request.mode === "surprise"
-      ? [...itemSources, ...genericSources]
-      : itemSources.length > 0
-        ? itemSources
-        : genericSources;
+    const itemSources = items
+      .map((item) => ({
+        item,
+        minutes: calibratedMinutes(
+          itemMinutes(item),
+          itemType(item),
+          calibration,
+        ),
+      }))
+      .filter(({ item, minutes }) =>
+        isEligible(item, request, now, minutes, energy),
+      )
+      .map(({ item }) =>
+        itemSource(item, progress, request, calibration, suggestableGoals),
+      )
+      .filter((source) => !exclude.has(source.task.key));
 
-  const chosen = chooseCandidate(
-    scoreSources(pool, { now, preferences }),
-    request.mode,
-  );
+    // A target's own time and energy win over the catalog default (job search:
+    // 45 minutes, LeetCode: normal). The slot still has the final say.
+    const genericSources = goalTargets
+      .map((target) => genericSourceFor(target, request, energy, calibration))
+      .filter((source): source is Source => source !== null)
+      .filter((source) => !exclude.has(source.task.key));
 
-  if (!chosen) return null;
+    const available = [...itemSources, ...genericSources];
+    if (available.length === 0) continue;
 
-  const suggestionId = await logSuggestion(
-    context,
-    request,
-    chosen.candidate,
-    chosen,
-    now,
-  );
+    let chosen: Scored<Source> | null = null;
 
-  return { ...chosen.candidate.task, suggestionId };
+    if (request.mode === "surprise") {
+      const picked = chooseUniform(available);
+      chosen = picked ? scoreSources([picked], scoreContext)[0] : null;
+    } else {
+      const buckets = new Map<string, Source[]>();
+      for (const source of available) {
+        const list = buckets.get(source.bucket) ?? [];
+        list.push(source);
+        buckets.set(source.bucket, list);
+      }
+
+      // Goals with nothing in this slot drop out, so their weight is not spent
+      // on an empty bucket.
+      const choices: GoalChoice[] = goalTargets
+        .filter((target) => (buckets.get(target.goal)?.length ?? 0) > 0)
+        .map((target) => ({
+          goal: target.goal,
+          weight: goalGapWeight(target.perWeek, target.done, "smart"),
+        }));
+
+      const bucket = chooseGoal(
+        choices,
+        (buckets.get(OTHER_GOAL)?.length ?? 0) > 0,
+      );
+      const sources = bucket ? (buckets.get(bucket) ?? []) : [];
+
+      const generic = sources.find(
+        (source) => source.task.source === "generic",
+      );
+      const goalItems = sources.filter(
+        (source) => source.task.source === "item",
+      );
+
+      chosen = chooseInGoal(
+        scoreSources(goalItems, scoreContext),
+        generic ? scoreSources([generic], scoreContext)[0] : null,
+      );
+    }
+
+    if (!chosen) continue;
+
+    const suggestionId = await logSuggestion(
+      context,
+      request,
+      chosen.candidate,
+      chosen,
+      now,
+      relaxed,
+    );
+
+    const reason = relaxed
+      ? `${chosen.candidate.task.reason} · a step up in energy`
+      : chosen.candidate.task.reason;
+
+    return { ...chosen.candidate.task, reason, suggestionId };
+  }
+
+  return null;
 }
 

@@ -17,6 +17,7 @@ import {
   DISTANCE_GOAL,
   findGenericTask,
   goalLabel,
+  noFitMessage,
   taskKey,
   type Felt,
   type PickedTask,
@@ -28,18 +29,34 @@ import { istDayKey } from "@/lib/week";
 export const PICK_MINUTES = [15, 30, 60] as const;
 
 /**
- * Thin wrapper over `pickTask` so the chat tool and the Home buttons go through
- * one function (the suggestion is logged either way, which the picker relies on).
+ * The chat has to say something when a slot comes back empty instead of
+ * rendering an empty state, so the picker hands back a sentence as well as the
+ * task.
+ */
+export type PickTaskOutcome =
+  | { ok: true; task: PickedTask }
+  | { ok: false; message: string };
+
+/**
+ * Thin wrapper over `pickTask` for the chat tool. A null pick becomes the same
+ * "try a longer slot" wording the Home card shows.
  */
 export async function pickTaskForSession(
   session: DbSession,
   request: PickRequest,
   now: Date = new Date(),
-): Promise<PickedTask | null> {
-  return pickTask(
+): Promise<PickTaskOutcome> {
+  const task = await pickTask(
     { supabase: session.supabase, userId: session.userId, now },
     request,
   );
+
+  if (task) return { ok: true, task };
+
+  return {
+    ok: false,
+    message: noFitMessage(request.minutes, request.energy),
+  };
 }
 
 /** The parts of a picked task the write paths need, by value only. */
@@ -212,26 +229,30 @@ export async function completePickedTask(
   if (closed) return { ok: false, message: closed };
 
   if (task.source === "generic") {
+    // Built-in goals have a catalog entry; a custom goal only has its key, and
+    // the timer (or the default 30 minutes) is enough to log it.
     const template = findGenericTask(task.goal);
-    if (!template) {
+    const goal = task.goal ?? template?.goal ?? null;
+
+    if (!goal) {
       return {
         ok: false,
         message: "That suggestion is no longer available. Try What now? again.",
       };
     }
 
-    const minutes = task.elapsedMinutes ?? template.minutes;
+    const minutes = task.elapsedMinutes ?? template?.minutes ?? DEFAULT_MINUTES;
     const { error } = await session.supabase.from("completions").insert({
       user_id: session.userId,
       item_id: null,
-      goal: template.goal,
-      kind: template.goal,
+      goal,
+      kind: goal,
       minutes,
       felt,
       source: "suggestion",
       quantity: quantityFor(task.quantity),
       distance_km:
-        template.goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
+        goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
 
     if (error) {
@@ -254,7 +275,7 @@ export async function completePickedTask(
 
     return {
       ok: true,
-      message: loggedMessage(minutes, goalLabel(template.goal)),
+      message: loggedMessage(minutes, goalLabel(goal)),
     };
   }
 
