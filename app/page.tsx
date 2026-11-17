@@ -37,7 +37,7 @@ import {
   loadRestDayState,
   type RestDayState,
 } from "@/lib/services/rest-day";
-import { loadWeeklySummary, type WeekSummary } from "@/lib/services/weekly";
+import { loadLastWeekSummary, type WeekSummary } from "@/lib/services/weekly";
 import { loadStreak, type Streak } from "@/lib/streak";
 import { createClient } from "@/lib/supabase/server";
 import type { GoalCard } from "@/lib/targets";
@@ -103,17 +103,13 @@ export default async function HomePage() {
   }
 
   // Monday and Tuesday: the week that just ended is still fresh news, so Home
-  // shows one line about it. A failure here only hides the card.
+  // shows one line about it. It stays hidden until that week is on or after the
+  // first available week, so the card first appears on Monday 23 Nov 2026.
   let lastWeek: WeekSummary | null = null;
   const { weekday } = istParts(now);
   if (weekday === 1 || weekday === 2) {
     try {
-      const weeks = await loadWeeklySummary(
-        { supabase, userId: user.id },
-        now,
-        2,
-      );
-      lastWeek = weeks.find((week) => !week.isCurrent) ?? null;
+      lastWeek = await loadLastWeekSummary({ supabase, userId: user.id }, now);
     } catch (error) {
       console.error("Could not load last week's summary:", error);
     }

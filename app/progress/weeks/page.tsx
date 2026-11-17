@@ -5,11 +5,16 @@ import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { SetupNotice } from "@/components/setup-notice";
 import { WeekBars } from "@/components/week-bars";
+import { WeekPicker } from "@/components/week-picker";
 import { requireUser } from "@/lib/auth";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import { formatKm } from "@/lib/report";
 import { formatMinutes } from "@/lib/screen-time";
-import { loadWeeklySummary, type WeekSummary } from "@/lib/services/weekly";
+import {
+  loadWeeksPage,
+  type WeekSummary,
+  type WeeksPageData,
+} from "@/lib/services/weekly";
 import { createClient } from "@/lib/supabase/server";
 import { dayKeyLabel } from "@/lib/week";
 
@@ -20,7 +25,12 @@ export const metadata: Metadata = {
   title: "Weeks",
 };
 
-export default async function WeeksPage() {
+type WeeksPageProps = {
+  /** `?week=YYYY-MM-DD`, a Monday; anything else falls back to this week. */
+  searchParams: Promise<{ week?: string | string[] }>;
+};
+
+export default async function WeeksPage({ searchParams }: WeeksPageProps) {
   if (!isSupabaseConfigured()) {
     return (
       <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-4 p-4">
@@ -32,16 +42,24 @@ export default async function WeeksPage() {
 
   const user = await requireUser();
   const supabase = await createClient();
+  const params = await searchParams;
+  const rawWeek = Array.isArray(params.week) ? params.week[0] : params.week;
 
-  let weeks: WeekSummary[] = [];
+  let data: WeeksPageData | null = null;
   let loadError: string | null = null;
 
   try {
-    weeks = await loadWeeklySummary({ supabase, userId: user.id });
+    data = await loadWeeksPage(
+      { supabase, userId: user.id },
+      { week: rawWeek ?? null },
+    );
   } catch (error) {
     console.error(error);
     loadError = errorMessage(error);
   }
+
+  const selected = data?.selected ?? null;
+  const pastWeek = selected && !selected.isCurrent ? selected.startKey : null;
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden">
@@ -53,7 +71,9 @@ export default async function WeeksPage() {
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold tracking-tight">Weeks</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                The last {weeks.length || 8} weeks, counted from your own data.
+                {selected?.isCurrent
+                  ? "This week so far, counted from your own data."
+                  : "One week at a time, counted from your own data."}
               </p>
             </div>
             <Link
@@ -73,19 +93,19 @@ export default async function WeeksPage() {
             </p>
           )}
 
-          {weeks.length === 0 && !loadError && (
+          {data && selected && (
+            <WeekPicker options={data.pastWeeks} selected={pastWeek} />
+          )}
+
+          {selected && (
+            <WeekCard week={selected} previous={data?.previous ?? null} />
+          )}
+
+          {!selected && !loadError && (
             <p className="mt-4 rounded-2xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
               Nothing to summarise yet.
             </p>
           )}
-
-          {weeks.map((week, index) => (
-            <WeekCard
-              key={week.startKey}
-              week={week}
-              previous={weeks[index + 1] ?? null}
-            />
-          ))}
         </div>
       </div>
       <BottomNav />
@@ -136,7 +156,7 @@ function WeekCard({
         <h2 className="text-sm font-semibold">{week.label}</h2>
         {week.isCurrent ? (
           <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            This week
+            This week so far
           </span>
         ) : previous ? (
           <span className="shrink-0 text-[11px] text-muted-foreground">

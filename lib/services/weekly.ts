@@ -2,23 +2,27 @@
  * The weekly summary page: everything on it is computed from rows already in
  * the database. No model, no stored paragraphs, no extra table.
  *
- * One Monday–Sunday week per card, newest first. A week's numbers come from the
- * completions, journal moods, screen time and rest day that fall inside it, so
- * the page cannot disagree with Home, the calendar or the streak.
+ * One Monday–Sunday week per view. A week's numbers come from the completions,
+ * journal moods, screen time and rest day that fall inside it, so the page
+ * cannot disagree with Home, the calendar or the streak.
+ *
+ * There is no fixed look-back: the first week is the week of the earliest row,
+ * clamped to the 16 Nov 2026 floor, and every week before it is ignored.
  */
 
 import { weekStartOf } from "@/lib/rest-day";
 import type { DbSession } from "@/lib/services/session";
 import { DISTANCE_GOAL, goalLabel } from "@/lib/task";
 import {
+  isDayKey,
   istDayKey,
   istWeekLabel,
   shiftDayKey,
   startOfIstWeek,
 } from "@/lib/week";
 
-/** Weeks shown on the page, including the one in progress. */
-export const WEEKLY_SUMMARY_WEEKS = 8;
+/** Nothing before this Monday is ever summarised, even if older rows exist. */
+export const FIRST_WEEK_FLOOR = "2026-11-16";
 
 /** Monday-first initials, the same order the calendar grid uses. */
 const WEEKDAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"] as const;
@@ -90,21 +94,169 @@ function dayKeyOf(value: string): string {
 }
 
 /**
- * `weeks` Monday–Sunday summaries, newest first. Reads are bounded to the range
+ * The first week worth showing: the first Monday on or after the earliest row
+ * (so a partial first week is never summarised), clamped to the floor.
+ */
+export function firstAvailableWeek(earliestDayKey: string | null): string {
+  const floorWeek = weekStartOf(FIRST_WEEK_FLOOR);
+  const floor =
+    floorWeek === FIRST_WEEK_FLOOR ? floorWeek : shiftDayKey(floorWeek, 7);
+
+  if (!earliestDayKey || !isDayKey(earliestDayKey)) return floor;
+
+  const monday = weekStartOf(earliestDayKey);
+  const start = monday === earliestDayKey ? monday : shiftDayKey(monday, 7);
+
+  return start > floor ? start : floor;
+}
+
+/** True for a `YYYY-MM-DD` key that is itself a Monday. */
+export function isWeekStart(value: string): boolean {
+  return isDayKey(value) && weekStartOf(value) === value;
+}
+
+/** Completed weeks on or after `firstWeek`, newest first. */
+export function completedWeeks(
+  firstWeek: string,
+  currentWeek: string,
+): string[] {
+  const weeks: string[] = [];
+
+  for (
+    let start = shiftDayKey(currentWeek, -7);
+    start >= firstWeek;
+    start = shiftDayKey(start, -7)
+  ) {
+    weeks.push(start);
+  }
+
+  return weeks;
+}
+
+/**
+ * `?week=` when it names a Monday between the first available week and today's
+ * week; anything else (too old, in the future, not a Monday) means this week.
+ */
+export function resolveWeek(
+  requested: string | null | undefined,
+  firstWeek: string,
+  currentWeek: string,
+): string {
+  const value = typeof requested === "string" ? requested.trim() : "";
+
+  if (!isWeekStart(value)) return currentWeek;
+  if (value < firstWeek || value > currentWeek) return currentWeek;
+
+  return value;
+}
+
+/** One option of the "Past weeks" dropdown. */
+export type WeekOption = {
+  week: string;
+  /** `9–15 Nov`, the same label the card heading uses. */
+  label: string;
+};
+
+export type WeeksPageData = {
+  firstWeek: string;
+  currentWeek: string;
+  /** The week on screen, or null while the floor is still in the future. */
+  selected: WeekSummary | null;
+  /** The week before `selected`, only when it is on or after `firstWeek`. */
+  previous: WeekSummary | null;
+  /** Completed weeks, newest first; the current week is never an option. */
+  pastWeeks: WeekOption[];
+};
+
+function weekLabelOf(startKey: string): string {
+  return istWeekLabel(
+    new Date(`${startKey}T00:00:00+05:30`),
+    new Date(`${shiftDayKey(startKey, 7)}T00:00:00+05:30`),
+  );
+}
+
+/**
+ * Earliest day with a row anywhere: completions, journal or screen time. A
+ * missing completions table is fatal, the optional ones just leave no vote.
+ */
+async function loadFirstWeek(session: DbSession): Promise<string> {
+  const [completionResult, journalResult, screenResult] = await Promise.all([
+    session.supabase
+      .from("completions")
+      .select("completed_at")
+      .eq("user_id", session.userId)
+      .order("completed_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    session.supabase
+      .from("journal_entries")
+      .select("day")
+      .eq("user_id", session.userId)
+      .order("day", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    session.supabase
+      .from("screen_time_entries")
+      .select("day")
+      .eq("user_id", session.userId)
+      .order("day", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (completionResult.error) {
+    throw new Error(
+      `Could not load your weeks: ${completionResult.error.message}`,
+    );
+  }
+
+  if (journalResult.error) {
+    console.error(
+      "Could not load the first journal day:",
+      journalResult.error.message,
+    );
+  }
+
+  if (screenResult.error) {
+    console.error(
+      "Could not load the first screen-time day:",
+      screenResult.error.message,
+    );
+  }
+
+  const days: string[] = [];
+
+  if (completionResult.data?.completed_at) {
+    days.push(istDayKey(new Date(completionResult.data.completed_at)));
+  }
+  if (journalResult.data?.day) {
+    days.push(dayKeyOf(journalResult.data.day));
+  }
+  if (screenResult.data?.day) {
+    days.push(dayKeyOf(screenResult.data.day));
+  }
+
+  days.sort();
+
+  return firstAvailableWeek(days[0] ?? null);
+}
+
+/**
+ * The requested Mondays only, oldest first. Reads are bounded to those weeks
  * and errors are only fatal for completions: a missing journal table, screen
  * log or 008 column just leaves those numbers empty.
  */
-export async function loadWeeklySummary(
+async function loadWeekSummaries(
   session: DbSession,
-  now: Date = new Date(),
-  weeks: number = WEEKLY_SUMMARY_WEEKS,
+  weekStarts: readonly string[],
+  now: Date,
 ): Promise<WeekSummary[]> {
-  const total = Math.min(Math.max(Math.round(weeks), 1), 26);
-  const todayKey = istDayKey(now);
+  const starts = [...new Set(weekStarts)].filter(isWeekStart).sort();
+  if (starts.length === 0) return [];
+
   const thisWeekStart = istDayKey(startOfIstWeek(now));
-  const firstStart = shiftDayKey(thisWeekStart, -7 * (total - 1));
-  const rangeStart = `${firstStart}T00:00:00+05:30`;
-  const rangeEnd = `${shiftDayKey(thisWeekStart, 7)}T00:00:00+05:30`;
+  const rangeStart = starts[0];
+  const rangeEnd = shiftDayKey(starts[starts.length - 1], 7);
 
   const [completionResult, journalResult, screenResult, restResult, targetResult] =
     await Promise.all([
@@ -112,30 +264,30 @@ export async function loadWeeklySummary(
         .from("completions")
         .select("goal, minutes, distance_km, completed_at")
         .eq("user_id", session.userId)
-        .gte("completed_at", rangeStart)
-        .lt("completed_at", rangeEnd)
+        .gte("completed_at", `${rangeStart}T00:00:00+05:30`)
+        .lt("completed_at", `${rangeEnd}T00:00:00+05:30`)
         .order("completed_at", { ascending: true })
         .limit(5000),
       session.supabase
         .from("journal_entries")
         .select("day, mood")
         .eq("user_id", session.userId)
-        .gte("day", firstStart)
-        .lte("day", todayKey),
+        .gte("day", rangeStart)
+        .lt("day", rangeEnd),
       session.supabase
         .from("screen_time_entries")
         .select("day, minutes")
         .eq("user_id", session.userId)
-        .gte("day", firstStart)
-        .lte("day", todayKey),
+        .gte("day", rangeStart)
+        .lt("day", rangeEnd),
       // Optional: the page still works before migration 008 is applied.
       session.supabase
         .from("journal_entries")
         .select("day")
         .eq("user_id", session.userId)
         .eq("is_rest_day", true)
-        .gte("day", firstStart)
-        .lte("day", todayKey),
+        .gte("day", rangeStart)
+        .lt("day", rangeEnd),
       // Custom goals carry the user's own label; built-ins fall back to `task`.
       session.supabase
         .from("targets")
@@ -180,10 +332,76 @@ export async function loadWeeklySummary(
     screens: (screenResult.data ?? []) as ScreenRow[],
     restDays,
     labels,
-    firstStart,
-    total,
+    weekStarts: starts,
     thisWeekStart,
   });
+}
+
+/**
+ * Everything the Weeks page needs: the first available week, the week asked for
+ * (or this week), the week before it for the comparison line, and the completed
+ * weeks for the dropdown. Only one week is ever summarised for display.
+ */
+export async function loadWeeksPage(
+  session: DbSession,
+  options: { now?: Date; week?: string | null } = {},
+): Promise<WeeksPageData> {
+  const now = options.now ?? new Date();
+  const currentWeek = istDayKey(startOfIstWeek(now));
+  const firstWeek = await loadFirstWeek(session);
+  const pastWeeks = completedWeeks(firstWeek, currentWeek).map((week) => ({
+    week,
+    label: weekLabelOf(week),
+  }));
+
+  if (currentWeek < firstWeek) {
+    return {
+      firstWeek,
+      currentWeek,
+      selected: null,
+      previous: null,
+      pastWeeks: [],
+    };
+  }
+
+  const selectedWeek = resolveWeek(options.week, firstWeek, currentWeek);
+  const previousWeek = shiftDayKey(selectedWeek, -7);
+  const hasPrevious =
+    previousWeek >= firstWeek && selectedWeek !== currentWeek;
+
+  const summaries = await loadWeekSummaries(
+    session,
+    hasPrevious ? [previousWeek, selectedWeek] : [selectedWeek],
+    now,
+  );
+  const byWeek = new Map(summaries.map((week) => [week.startKey, week]));
+
+  return {
+    firstWeek,
+    currentWeek,
+    selected: byWeek.get(selectedWeek) ?? null,
+    previous: hasPrevious ? byWeek.get(previousWeek) ?? null : null,
+    pastWeeks,
+  };
+}
+
+/**
+ * The week that just ended, or null while it sits before the first available
+ * week. Home uses this so the "Last week" card first appears on 23 Nov 2026.
+ */
+export async function loadLastWeekSummary(
+  session: DbSession,
+  now: Date = new Date(),
+): Promise<WeekSummary | null> {
+  const firstWeek = await loadFirstWeek(session);
+  const currentWeek = istDayKey(startOfIstWeek(now));
+  const previousWeek = shiftDayKey(currentWeek, -7);
+
+  if (previousWeek < firstWeek) return null;
+
+  const [summary] = await loadWeekSummaries(session, [previousWeek], now);
+
+  return summary ?? null;
 }
 
 type SummariseInput = {
@@ -192,10 +410,8 @@ type SummariseInput = {
   screens: ScreenRow[];
   restDays: string[];
   labels: Map<string, string>;
-  /** Monday of the oldest week. */
-  firstStart: string;
-  /** Weeks to render. */
-  total: number;
+  /** Mondays to build, ascending. */
+  weekStarts: readonly string[];
   /** Monday of the week containing today. */
   thisWeekStart: string;
 };
@@ -216,15 +432,13 @@ function summariseWeeks({
   screens,
   restDays,
   labels,
-  firstStart,
-  total,
+  weekStarts,
   thisWeekStart,
 }: SummariseInput): WeekSummary[] {
   const order: string[] = [];
   const buckets = new Map<string, Bucket>();
 
-  for (let index = 0; index < total; index += 1) {
-    const startKey = shiftDayKey(firstStart, index * 7);
+  for (const startKey of weekStarts) {
     const endKey = shiftDayKey(startKey, 6);
     const start = new Date(`${startKey}T00:00:00+05:30`);
     const end = new Date(`${shiftDayKey(startKey, 7)}T00:00:00+05:30`);
@@ -342,6 +556,5 @@ function summariseWeeks({
       );
 
       return summary;
-    })
-    .reverse();
+    });
 }

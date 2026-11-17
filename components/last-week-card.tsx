@@ -17,7 +17,7 @@ export function LastWeekCard({ week }: LastWeekCardProps) {
   return (
     <section className="mx-auto w-full max-w-md px-4 pb-6">
       <Link
-        href="/progress/weeks"
+        href={`/progress/weeks?week=${week.startKey}`}
         className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-background p-4 transition-colors hover:bg-muted"
       >
         <div className="min-w-0">
