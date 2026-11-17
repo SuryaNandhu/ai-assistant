@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { istDayKey, istParts, shiftDayKey } from "@/lib/week";
+import { istDayKey, shiftDayKey } from "@/lib/week";
 
 export type JournalMood = 1 | 2 | 3 | 4 | 5;
 
@@ -28,13 +28,6 @@ export const JOURNAL_NOTE_MAX = 200;
  * gap without turning the journal into homework; older days stay on /progress.
  */
 export const JOURNAL_BACKLOG_DAYS = 3;
-
-/** From 7 pm IST the day is winding down, so Home asks how it went. */
-export const JOURNAL_PROMPT_HOUR = 19;
-
-export function isJournalPromptTime(now: Date = new Date()): boolean {
-  return istParts(now).hour >= JOURNAL_PROMPT_HOUR;
-}
 
 export function moodEmoji(mood: number | null): string {
   return JOURNAL_MOODS.find((entry) => entry.value === mood)?.emoji ?? "•";

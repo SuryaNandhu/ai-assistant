@@ -79,7 +79,7 @@ export default async function JournalPage() {
               <div className="mt-4 rounded-2xl border border-dashed border-border p-6 text-center">
                 <p className="text-sm font-medium">No entries yet</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Home asks how your day was after 7 pm.
+                  Home asks how your day was after 8 pm.
                 </p>
               </div>
             )

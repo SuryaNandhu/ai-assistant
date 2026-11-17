@@ -15,7 +15,6 @@ import { requireUser } from "@/lib/auth";
 import { currentMonth } from "@/lib/calendar";
 import { errorMessage, isSupabaseConfigured } from "@/lib/env";
 import {
-  isJournalPromptTime,
   loadJournalBacklog,
   loadJournalEntry,
   type JournalBacklog,
@@ -164,10 +163,7 @@ export default async function HomePage() {
           milestones={projectDetail?.milestones ?? []}
         />
         <ScreenTimePrompt days={missingScreenDays} todayKey={todayKey} />
-        <JournalCard
-          entry={journalEntry}
-          showPrompt={isJournalPromptTime(now)}
-        />
+        <JournalCard hasMood={journalEntry?.mood != null} />
         <JournalBacklogCard
           days={journalBacklog.missing}
           todayKey={todayKey}
