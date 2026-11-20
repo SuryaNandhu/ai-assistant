@@ -242,6 +242,22 @@ export default async function ProgressPage({ searchParams }: ProgressPageProps) 
 
           <section className="mt-6 rounded-2xl border border-border p-4">
             <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Reading
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              One book at a time, the page you are on, and the pace it takes to
+              finish.
+            </p>
+            <Link
+              href="/books"
+              className="mt-3 inline-flex h-11 items-center rounded-xl border border-border px-4 text-sm font-semibold underline-offset-2 hover:bg-muted"
+            >
+              Open the book tracker
+            </Link>
+          </section>
+
+          <section className="mt-6 rounded-2xl border border-border p-4">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Your data
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
