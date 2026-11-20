@@ -1,7 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { istDayKey } from "@/lib/week";
-
 /**
  * The reading tracker: one book at a time, a page count, and a pace worked out
  * from `started_on`. Pure except the loader, so client components may use the
@@ -215,9 +213,4 @@ export async function loadBooks(
   }
 
   return shelf;
-}
-
-/** Today's IST day key, so the actions and the page agree on "today". */
-export function todayKey(now: Date = new Date()): string {
-  return istDayKey(now);
 }
