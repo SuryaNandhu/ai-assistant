@@ -302,6 +302,17 @@ export function targetHint(goal: GoalProgress): string | null {
   return null;
 }
 
+/**
+ * True when there is nothing left to nudge: the period is already met (3/3 days
+ * this week, or this month's single resume update) or today's daily minimum is
+ * met (3 applications sent). The picker drops these goals so it never suggests
+ * work that is already done.
+ */
+export function targetSatisfied(goal: GoalProgress): boolean {
+  if (goal.done >= goal.perWeek) return true;
+  return goal.minQuantity !== null && goal.todayQuantity >= goal.minQuantity;
+}
+
 /** `2026-11-15` for a Date — used for the export filename. */
 export function istDayKeyOf(date: Date): string {
   return istDayKey(date);

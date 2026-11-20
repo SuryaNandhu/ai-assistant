@@ -23,6 +23,7 @@ export {
   loadTargetProgress,
   periodLabel,
   targetHint,
+  targetSatisfied,
 } from "@/lib/targets";
 
 export function loadWeeklyProgress(

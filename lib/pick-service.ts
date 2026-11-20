@@ -23,6 +23,7 @@ import {
   findGoalProgress,
   loadWeeklyProgress,
   periodLabel,
+  targetSatisfied,
   type GoalProgress,
   type WeeklyProgress,
 } from "@/lib/progress";
@@ -337,6 +338,7 @@ function genericSource(
       goal: template.goal,
       goalLabel: target.label,
       minutes,
+      timeless: template.timeless === true,
       energy: template.energy,
       url: null,
       // Say where the idea came from; the goal line alone reads like a saved
@@ -353,7 +355,8 @@ function genericSource(
       type: template.goal,
       tags: [],
       energy: template.energy,
-      minutes,
+      // A timeless idea fits every slot, so time never counts against it.
+      minutes: template.timeless ? request.minutes : minutes,
       availableMinutes: request.minutes,
       lastSkippedAt: null,
       goalWeight: goalGapWeight(target.perWeek, target.done, request.mode),
@@ -377,7 +380,7 @@ function genericSourceFor(
     energy: target.energy,
   });
 
-  if (template.minutes > request.minutes) return null;
+  if (!template.timeless && template.minutes > request.minutes) return null;
   if (energyRank(template.energy) > energyRank(energy)) return null;
 
   return genericSource(template, target, request, calibration);
@@ -488,7 +491,11 @@ export async function pickTask(
 
   // Only goals the user can still be nudged toward get a bucket. walk/run stays
   // out of the picker's plan but its saved items remain pickable via "other".
-  const goalTargets = progress.goals.filter((target) => target.suggestable);
+  // A goal that is already met — 3/3 this week, this month's resume update, or
+  // today's 3 applications — is done, so it is not suggested again.
+  const goalTargets = progress.goals.filter(
+    (target) => target.suggestable && !targetSatisfied(target),
+  );
   const suggestableGoals = new Set(goalTargets.map((target) => target.goal));
 
   const relaxedEnergy = nextEnergy(request.energy);
