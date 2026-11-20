@@ -6,6 +6,13 @@
 
 export type Energy = "low" | "normal" | "high";
 
+/**
+ * The one goal measured in actions, not minutes: a job-search day is "3
+ * applications", so its quick log, Done sheet and chat tool all skip time and
+ * felt and store the count instead.
+ */
+export const JOB_SEARCH_GOAL = "job_search";
+
 export const ENERGY_LEVELS: readonly Energy[] = ["low", "normal", "high"];
 
 export const ENERGY_LABELS: Record<Energy, string> = {
@@ -66,6 +73,12 @@ export type GenericTask = {
   title: string;
   minutes: number;
   energy: Energy;
+  /**
+   * True for a count-only idea (job search). The picker offers it in every time
+   * slot and the card shows no minutes, because the work is "three
+   * applications", not "thirty minutes".
+   */
+  timeless?: boolean;
 };
 
 /**
@@ -97,10 +110,12 @@ export const GENERIC_TASKS: readonly GenericTask[] = [
   {
     goal: "job_search",
     // Three applications is the daily minimum; the Done sheet asks how many
-    // were actually sent, so a half-finished sitting does not count.
+    // were actually sent, so a half-finished sitting does not count. No time is
+    // attached: a search day is counted, not timed.
     title: "Apply to 3 jobs or message 2 people",
     minutes: 30,
     energy: "normal",
+    timeless: true,
   },
   {
     goal: "walk_run",
@@ -143,6 +158,8 @@ export function genericTaskFor(
     title: template?.title ?? `Work on “${goalLabel(goal, options.label)}”`,
     minutes: options.minutes ?? template?.minutes ?? DEFAULT_MINUTES,
     energy: options.energy ?? template?.energy ?? DEFAULT_ENERGY,
+    // A custom goal is a timed sitting; only the job-search idea is timeless.
+    timeless: template?.timeless ?? goal === JOB_SEARCH_GOAL,
   };
 }
 
@@ -169,6 +186,8 @@ export type PickedTask = {
   goal: string | null;
   goalLabel: string;
   minutes: number;
+  /** Count-only task: no time on the card, and any slot can hold it. */
+  timeless?: boolean;
   energy: Energy;
   url: string | null;
   /** One short line explaining why this task surfaced. */

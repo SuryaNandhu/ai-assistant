@@ -16,7 +16,7 @@ import {
 } from "@/lib/inbox";
 import { clearRestDayForCompletion } from "@/lib/services/rest-day";
 import { createClient } from "@/lib/supabase/server";
-import { DEFAULT_MINUTES } from "@/lib/task";
+import { DEFAULT_MINUTES, JOB_SEARCH_GOAL } from "@/lib/task";
 import { istDayKey } from "@/lib/week";
 
 type Session = {
@@ -157,8 +157,11 @@ export async function markItemReadAction(input: unknown): Promise<ItemResult> {
   }
 
   if (current.status !== "done") {
-    const minutes =
-      typeof current.est_minutes === "number" && current.est_minutes > 0
+    // A job-search item is counted: one application, no minutes, no felt.
+    const countOnly = current.goal === JOB_SEARCH_GOAL;
+    const minutes = countOnly
+      ? null
+      : typeof current.est_minutes === "number" && current.est_minutes > 0
         ? current.est_minutes
         : DEFAULT_MINUTES;
 
@@ -170,8 +173,10 @@ export async function markItemReadAction(input: unknown): Promise<ItemResult> {
         goal: current.goal,
         kind: current.type || "item",
         minutes,
-        felt: "ok",
+        felt: countOnly ? null : "ok",
+        note: null,
         source: "manual",
+        quantity: countOnly ? 1 : null,
         distance_km: null,
       });
 

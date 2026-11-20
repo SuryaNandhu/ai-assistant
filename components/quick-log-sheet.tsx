@@ -45,14 +45,17 @@ export function QuickLogSheet({
   );
   const target = targets.find((entry) => entry.goal === goal) ?? targets[0];
 
+  // Job search is counted, not timed: the sheet asks "how many?" only.
+  const quantityOnly = target?.quantityOnly === true;
+
   const [minutes, setMinutes] = useState(target ? String(target.minutes) : "");
   const [distance, setDistance] = useState(
     target && target.distanceKm !== null ? String(target.distanceKm) : "",
   );
   // A daily minimum is prefilled with what is still missing today.
-  const [quantity, setQuantity] = useState(
-    target && target.minQuantity !== null && target.quantity !== null
-      ? String(target.quantity)
+  const [quantity, setQuantity] = useState(() =>
+    target && (target.minQuantity !== null || target.quantityOnly)
+      ? String(target.quantity ?? 1)
       : "",
   );
   const [felt, setFelt] = useState<Felt>("ok");
@@ -76,8 +79,8 @@ export function QuickLogSheet({
     setMinutes(String(next.minutes));
     setDistance(next.distanceKm === null ? "" : String(next.distanceKm));
     setQuantity(
-      next.minQuantity !== null && next.quantity !== null
-        ? String(next.quantity)
+      next.minQuantity !== null || next.quantityOnly
+        ? String(next.quantity ?? 1)
         : "",
     );
   }
@@ -88,14 +91,14 @@ export function QuickLogSheet({
 
     setError(null);
 
-    const parsedMinutes = Number(minutes);
-    if (
-      !Number.isFinite(parsedMinutes) ||
-      parsedMinutes < 1 ||
-      parsedMinutes > 600
-    ) {
-      setError("Minutes should be between 1 and 600.");
-      return;
+    let parsedMinutes: number | null = null;
+    if (!quantityOnly) {
+      const value = Number(minutes);
+      if (!Number.isFinite(value) || value < 1 || value > 600) {
+        setError("Minutes should be between 1 and 600.");
+        return;
+      }
+      parsedMinutes = Math.round(value);
     }
 
     let distanceKm: number | null = null;
@@ -115,10 +118,14 @@ export function QuickLogSheet({
     const trimmedNote = note.trim() ? note.trim().slice(0, 280) : null;
 
     let parsedQuantity: number | null = null;
-    if (target.minQuantity !== null) {
+    if (quantityOnly || target.minQuantity !== null) {
       const value = Math.round(Number(quantity));
       if (!Number.isFinite(value) || value < 1 || value > 1000) {
-        setError("How many should be between 1 and 1000.");
+        setError(
+          quantityOnly
+            ? "How many applications, follow-ups or referral asks? Use 1 to 1000."
+            : "How many should be between 1 and 1000.",
+        );
         return;
       }
       parsedQuantity = value;
@@ -127,10 +134,10 @@ export function QuickLogSheet({
     startSaving(async () => {
       const result = await quickLogAction({
         goal: target.goal,
-        minutes: Math.round(parsedMinutes),
+        minutes: parsedMinutes,
         distanceKm,
         quantity: parsedQuantity,
-        felt,
+        felt: quantityOnly ? null : felt,
         note: trimmedNote,
         day,
       });
@@ -174,7 +181,9 @@ export function QuickLogSheet({
           Log {target.label.toLowerCase()}
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Filled in with your usual numbers. Change anything you like.
+          {quantityOnly
+            ? "Counted, not timed. Just say how many."
+            : "Filled in with your usual numbers. Change anything you like."}
         </p>
 
         {showTargetPicker && targets.length > 1 && (
@@ -202,18 +211,20 @@ export function QuickLogSheet({
         )}
 
         <div className="mt-4 grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-sm font-medium">Minutes</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={600}
-              value={minutes}
-              onChange={(event) => setMinutes(event.target.value)}
-              className={INPUT_CLASS}
-            />
-          </label>
+          {!quantityOnly && (
+            <label className="block">
+              <span className="text-sm font-medium">Minutes</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={600}
+                value={minutes}
+                onChange={(event) => setMinutes(event.target.value)}
+                className={INPUT_CLASS}
+              />
+            </label>
+          )}
 
           {target.distanceKm !== null && (
             <label className="block">
@@ -231,8 +242,8 @@ export function QuickLogSheet({
             </label>
           )}
 
-          {target.minQuantity !== null && (
-            <label className="block">
+          {(quantityOnly || target.minQuantity !== null) && (
+            <label className={quantityOnly ? "col-span-2 block" : "block"}>
               <span className="text-sm font-medium">How many?</span>
               <input
                 type="number"
@@ -247,7 +258,17 @@ export function QuickLogSheet({
           )}
         </div>
 
-        {target.minQuantity !== null && (
+        {quantityOnly && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Applications, follow-ups or referral asks.
+            {target.minQuantity !== null &&
+              (target.todayQuantity >= target.minQuantity
+                ? ` ${target.todayQuantity} already today, so this day already counts.`
+                : ` ${target.todayQuantity} of ${target.minQuantity} today; a day counts once it reaches ${target.minQuantity}.`)}
+          </p>
+        )}
+
+        {!quantityOnly && target.minQuantity !== null && (
           <p className="mt-1 text-xs text-muted-foreground">
             {target.todayQuantity >= target.minQuantity
               ? `${target.todayQuantity} already today, so this day already counts.`
@@ -263,27 +284,29 @@ export function QuickLogSheet({
           </p>
         )}
 
-        <fieldset className="mt-4">
-          <legend className="text-sm font-medium">How did it feel?</legend>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {FELT_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={felt === option.value}
-                onClick={() => setFelt(option.value)}
-                className={[
-                  "h-12 rounded-xl border text-sm font-medium transition-colors",
-                  felt === option.value
-                    ? "border-transparent bg-accent text-accent-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                ].join(" ")}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {!quantityOnly && (
+          <fieldset className="mt-4">
+            <legend className="text-sm font-medium">How did it feel?</legend>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {FELT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={felt === option.value}
+                  onClick={() => setFelt(option.value)}
+                  className={[
+                    "h-12 rounded-xl border text-sm font-medium transition-colors",
+                    felt === option.value
+                      ? "border-transparent bg-accent text-accent-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
 
         <label className="mt-4 block">
           <span className="text-sm font-medium">Note (optional)</span>

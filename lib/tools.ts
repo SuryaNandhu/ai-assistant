@@ -105,7 +105,16 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           .describe(
             "Goal key such as leetcode, ai_learning, bi, job_search, walk_run, resume_update, or null for other work.",
           ),
-        minutes: z.number().int().min(1).max(600),
+        minutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(600)
+          .nullable()
+          .optional()
+          .describe(
+            "Minutes spent. Ignored (and not stored) for job_search, which is counted rather than timed.",
+          ),
         note: z.string().max(200).nullable().optional(),
         day: DAY_KEY.optional(),
         distanceKm: z.number().min(0).max(100).nullable().optional(),
@@ -117,13 +126,13 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           .nullable()
           .optional()
           .describe(
-            "How many things were done, for goals with a daily minimum (job_search: applications sent). Omit for a single unit.",
+            "How many things were done: applications sent for job_search (required there), otherwise a single unit.",
           ),
       }),
       execute: async (input) => {
         const result = await logActivity(session, {
           goal: input.goal,
-          minutes: input.minutes,
+          minutes: input.minutes ?? null,
           note: input.note ?? null,
           day: input.day,
           distanceKm: input.distanceKm ?? null,
@@ -184,18 +193,25 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
         const task = result.task;
 
+        // A count-only task (job search) has no time to quote.
+        const message = task.timeless
+          ? `Try “${task.title}”. ${task.reason}`
+          : `Try “${task.title}” for about ${task.minutes} minutes. ${task.reason}`;
+
         return {
           ok: true,
-          message: `Try “${task.title}” for about ${task.minutes} minutes. ${task.reason}`,
+          message,
           suggestionId: task.suggestionId,
           task: {
             title: task.title,
-            minutes: task.minutes,
+            minutes: task.timeless ? null : task.minutes,
+            timeless: task.timeless === true,
             energy: task.energy,
             goal: task.goal,
             goalLabel: task.goalLabel,
             url: task.url,
             reason: task.reason,
+            quantity: task.quantityRemaining ?? null,
           },
         };
       },
@@ -203,7 +219,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
 
     complete_suggestion: tool({
       description:
-        "Mark the task from the last pick_task as done and record how it felt. Pass the suggestion id that pick_task returned.",
+        "Mark the task from the last pick_task as done and record how it felt. Pass the suggestion id that pick_task returned. For a job-search task pass quantity (applications sent) instead of felt.",
       inputSchema: z.object({
         suggestion_id: z
           .string()
@@ -211,6 +227,8 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
           .describe("The suggestion id returned by pick_task."),
         felt: z.enum(["easy", "right", "hard"]).optional(),
         liked: z.boolean().optional(),
+        /** Required for a counted task (job search); ignored otherwise. */
+        quantity: z.number().int().min(1).max(1000).optional(),
         takeaway: z.string().trim().max(280).optional(),
       }),
       execute: async (input) => {
@@ -229,6 +247,7 @@ export function chatTools(session: DbSession, now: Date = new Date()) {
             goal: found.task.goal,
             elapsedMinutes: null,
             distanceKm: null,
+            quantity: input.quantity ?? null,
             takeaway: input.takeaway ?? null,
             suggestionId: found.task.suggestionId,
           },

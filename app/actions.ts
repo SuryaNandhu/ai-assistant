@@ -57,11 +57,14 @@ const completeSchema = z.object({
     distanceKm: z.number().min(0).max(100).nullable().default(null),
     /** Applications sent / problems solved; null means a single thing. */
     quantity: z.number().int().min(1).max(1000).nullable().default(null),
+    /** One-line note for a counted log (job search); optional elsewhere. */
+    note: z.string().trim().max(280).nullable().default(null),
     /** One-line takeaway for a link; ignored for generic suggestions. */
     takeaway: z.string().trim().max(280).nullable().default(null),
     suggestionId: z.uuid().nullable().default(null),
   }),
-  felt: feltSchema,
+  /** Null for a counted log (job search), which is never scored by feel. */
+  felt: feltSchema.nullable().default(null),
   /** "More like this?" — null means the user did not answer. */
   liked: z.boolean().nullable().default(null),
 });

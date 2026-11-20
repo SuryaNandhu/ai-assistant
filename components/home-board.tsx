@@ -169,17 +169,21 @@ export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
   }
 
   function handleConfirm(input: {
-    felt: Felt;
+    felt: Felt | null;
     distanceKm: number | null;
     quantity: number | null;
+    note: string | null;
     takeaway: string | null;
     liked: boolean | null;
   }) {
     if (!task || saving) return;
 
     const current = task;
+    // A counted task has no clock: sending seconds would fabricate minutes.
     const elapsedMinutes =
-      elapsedSeconds >= 60 ? Math.max(1, Math.round(elapsedSeconds / 60)) : null;
+      current.timeless || elapsedSeconds < 60
+        ? null
+        : Math.max(1, Math.round(elapsedSeconds / 60));
 
     startSaving(async () => {
       const result = await completeTaskAction({
@@ -190,6 +194,7 @@ export function HomeBoard({ targets, todayKey, minDayKey }: HomeBoardProps) {
           elapsedMinutes,
           distanceKm: input.distanceKm,
           quantity: input.quantity,
+          note: input.note,
           takeaway: input.takeaway,
           suggestionId: current.suggestionId,
         },

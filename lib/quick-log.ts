@@ -11,7 +11,7 @@
  */
 
 import { EDIT_WINDOW_DAYS } from "@/lib/lock";
-import { DISTANCE_GOAL } from "@/lib/task";
+import { DISTANCE_GOAL, JOB_SEARCH_GOAL } from "@/lib/task";
 import type { GoalProgress, TargetPeriod } from "@/lib/targets";
 
 export type QuickLogTarget = {
@@ -19,6 +19,8 @@ export type QuickLogTarget = {
   goal: string | null;
   label: string;
   minutes: number;
+  /** Count-only goal (job search): the sheet asks "how many?" and no time. */
+  quantityOnly: boolean;
   /** Prefilled distance for walk/run goals, null for everything else. */
   distanceKm: number | null;
   /** Walk/run only: below this distance the log does not count this week. */
@@ -74,6 +76,7 @@ export function quickLogTargets(
       goal: goal.goal,
       label: goal.label,
       minutes: goal.estMinutes ?? defaultMinutes(goal.goal),
+      quantityOnly: goal.goal === JOB_SEARCH_GOAL,
       distanceKm:
         goal.goal === DISTANCE_GOAL ? QUICK_LOG_DEFAULT_DISTANCE_KM : null,
       minDistanceKm: goal.minDistanceKm,
@@ -86,6 +89,7 @@ export function quickLogTargets(
       goal: null,
       label: "Other",
       minutes: QUICK_LOG_FALLBACK_MINUTES,
+      quantityOnly: false,
       distanceKm: null,
       minDistanceKm: null,
       minQuantity: null,

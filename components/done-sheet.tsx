@@ -19,10 +19,13 @@ type DoneSheetProps = {
   error: string | null;
   onCancel: () => void;
   onConfirm: (input: {
-    felt: Felt;
+    /** Null for a counted task (job search), which is never scored by feel. */
+    felt: Felt | null;
     distanceKm: number | null;
     /** Only for goals with a daily minimum (job search: 3 applications). */
     quantity: number | null;
+    /** Optional one-line note, offered for a counted log. */
+    note: string | null;
     takeaway: string | null;
     liked: boolean | null;
   }) => void;
@@ -46,12 +49,19 @@ export function DoneSheet({
 }: DoneSheetProps) {
   const [felt, setFelt] = useState<Felt>("ok");
   const [distance, setDistance] = useState(String(DEFAULT_DISTANCE_KM));
+
+  /** A counted task (job search) has no clock, so it logs a number only. */
+  const countOnly = task.timeless === true;
+
   // A daily minimum is prefilled with what is still missing today.
-  const [quantity, setQuantity] = useState(
-    task.minQuantity === null || task.minQuantity === undefined
-      ? ""
-      : String(task.quantityRemaining ?? task.minQuantity),
-  );
+  const [quantity, setQuantity] = useState(() => {
+    const remaining = task.quantityRemaining ?? task.minQuantity;
+    if (typeof remaining === "number" && remaining > 0) {
+      return String(remaining);
+    }
+    return countOnly ? "1" : "";
+  });
+  const [note, setNote] = useState("");
   const [takeaway, setTakeaway] = useState(task.takeaway ?? "");
   const [liked, setLiked] = useState<boolean | null>(null);
 
@@ -68,6 +78,27 @@ export function DoneSheet({
     event.preventDefault();
 
     const saved = takeaway.trim() ? takeaway.trim().slice(0, 280) : null;
+    const savedNote = note.trim() ? note.trim().slice(0, 280) : null;
+
+    // Job search is counted, not timed: no feel, no minutes, no "like" signal.
+    if (countOnly) {
+      const parsedQuantity = Number(quantity);
+      const counted =
+        Number.isFinite(parsedQuantity) && parsedQuantity >= 1
+          ? Math.min(1000, Math.round(parsedQuantity))
+          : 1;
+
+      onConfirm({
+        felt: null,
+        distanceKm: null,
+        quantity: counted,
+        note: savedNote,
+        takeaway: saved,
+        liked: null,
+      });
+      return;
+    }
+
     const parsedQuantity = Number(quantity);
     const counted =
       task.minQuantity === null || task.minQuantity === undefined
@@ -81,6 +112,7 @@ export function DoneSheet({
         felt,
         distanceKm: null,
         quantity: counted,
+        note: null,
         takeaway: saved,
         liked,
       });
@@ -92,7 +124,14 @@ export function DoneSheet({
       ? Math.min(100, Math.max(0, parsed))
       : DEFAULT_DISTANCE_KM;
 
-    onConfirm({ felt, distanceKm, quantity: counted, takeaway: saved, liked });
+    onConfirm({
+      felt,
+      distanceKm,
+      quantity: counted,
+      note: null,
+      takeaway: saved,
+      liked,
+    });
   }
 
   return (
@@ -122,31 +161,33 @@ export function DoneSheet({
           Log this task
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          {task.goalLabel} · {task.minutes} min
+          {countOnly ? task.goalLabel : `${task.goalLabel} · ${task.minutes} min`}
         </p>
         <p className="mt-2 text-sm">{task.title}</p>
 
-        <fieldset className="mt-4">
-          <legend className="text-sm font-medium">How did it feel?</legend>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {FELT_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={felt === option.value}
-                onClick={() => setFelt(option.value)}
-                className={[
-                  "h-12 rounded-xl border text-sm font-medium transition-colors",
-                  felt === option.value
-                    ? "border-transparent bg-accent text-accent-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                ].join(" ")}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {!countOnly && (
+          <fieldset className="mt-4">
+            <legend className="text-sm font-medium">How did it feel?</legend>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {FELT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={felt === option.value}
+                  onClick={() => setFelt(option.value)}
+                  className={[
+                    "h-12 rounded-xl border text-sm font-medium transition-colors",
+                    felt === option.value
+                      ? "border-transparent bg-accent text-accent-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
 
         {isWalk && (
           <div className="mt-4">
@@ -170,7 +211,8 @@ export function DoneSheet({
           </div>
         )}
 
-        {task.minQuantity !== null && task.minQuantity !== undefined && (
+        {(countOnly ||
+          (task.minQuantity !== null && task.minQuantity !== undefined)) && (
           <div className="mt-4">
             <label htmlFor="quantity" className="text-sm font-medium">
               How many?
@@ -187,14 +229,45 @@ export function DoneSheet({
               className="mt-2 h-12 w-full rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Only a day with {task.minQuantity} or more counts towards{" "}
-              {task.goalLabel}
-              {task.quantityRemaining !== null &&
-              task.quantityRemaining !== undefined
-                ? ` · ${task.quantityRemaining} more to go today`
-                : ""}
-              .
+              {countOnly ? (
+                <>
+                  Counted, not timed. A day needs {task.minQuantity ?? 1} or more
+                  to count towards {task.goalLabel}
+                  {task.quantityRemaining !== null &&
+                  task.quantityRemaining !== undefined
+                    ? ` · ${task.quantityRemaining} more to go today`
+                    : ""}
+                  .
+                </>
+              ) : (
+                <>
+                  Only a day with {task.minQuantity} or more counts towards{" "}
+                  {task.goalLabel}
+                  {task.quantityRemaining !== null &&
+                  task.quantityRemaining !== undefined
+                    ? ` · ${task.quantityRemaining} more to go today`
+                    : ""}
+                  .
+                </>
+              )}
             </p>
+          </div>
+        )}
+
+        {countOnly && (
+          <div className="mt-4">
+            <label htmlFor="done-note" className="text-sm font-medium">
+              Note (optional)
+            </label>
+            <input
+              id="done-note"
+              type="text"
+              maxLength={280}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Which roles did you apply to?"
+              className="mt-2 h-12 w-full rounded-xl border border-border bg-background px-3 text-base outline-none focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
+            />
           </div>
         )}
 
@@ -218,35 +291,37 @@ export function DoneSheet({
           </div>
         )}
 
-        <fieldset className="mt-4">
-          <legend className="text-sm font-medium">More like this?</legend>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            {LIKE_OPTIONS.map((option) => {
-              const active = liked === option.value;
+        {!countOnly && (
+          <fieldset className="mt-4">
+            <legend className="text-sm font-medium">More like this?</legend>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {LIKE_OPTIONS.map((option) => {
+                const active = liked === option.value;
 
-              return (
-                <button
-                  key={option.label}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setLiked(active ? null : option.value)}
-                  className={[
-                    "flex h-12 items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
-                    active
-                      ? "border-transparent bg-accent text-accent-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted",
-                  ].join(" ")}
-                >
-                  <span aria-hidden="true">{option.emoji}</span>
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Optional. Teaches the picker which kind of task to bring back.
-          </p>
-        </fieldset>
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setLiked(active ? null : option.value)}
+                    className={[
+                      "flex h-12 items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
+                      active
+                        ? "border-transparent bg-accent text-accent-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    <span aria-hidden="true">{option.emoji}</span>
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Optional. Teaches the picker which kind of task to bring back.
+            </p>
+          </fieldset>
+        )}
 
         {error && (
           <p

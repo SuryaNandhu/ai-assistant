@@ -25,7 +25,8 @@ const SIGNED_OUT = "You are signed out. Refresh the page and sign in again.";
  */
 const quickLogSchema = z.object({
   goal: z.string().trim().max(60).nullable().default(null),
-  minutes: z.number().int().min(1).max(600),
+  /** Minutes are ignored for count-only goals (job search). */
+  minutes: z.number().int().min(1).max(600).nullable().default(null),
   distanceKm: z.number().min(0).max(100).nullable().default(null),
   /** Applications sent / problems solved; null means a single thing. */
   quantity: z.number().int().min(1).max(1000).nullable().default(null),

@@ -48,7 +48,11 @@ export function TaskCard({
         <span className="rounded-full bg-muted px-2.5 py-1 font-medium">
           {task.goalLabel}
         </span>
-        <span className="text-muted-foreground">{task.minutes} min</span>
+        {task.timeless ? (
+          <span className="text-muted-foreground">counted</span>
+        ) : (
+          <span className="text-muted-foreground">{task.minutes} min</span>
+        )}
         {task.source === "generic" && (
           <span className="rounded-full border border-dashed border-border px-2 py-0.5 text-muted-foreground">
             suggestion
@@ -61,7 +65,7 @@ export function TaskCard({
       </h2>
       <p className="mt-1.5 text-sm text-muted-foreground">{task.reason}</p>
 
-      {running && (
+      {running && !task.timeless && (
         <p className="mt-2 text-xs tabular-nums text-muted-foreground">
           Elapsed {formatElapsed(elapsedSeconds)} · est. {task.minutes} min
         </p>

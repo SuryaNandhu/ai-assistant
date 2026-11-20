@@ -6,7 +6,7 @@ import { z } from "zod";
 import { describeDbError } from "@/lib/errors";
 import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import { createClient } from "@/lib/supabase/server";
-import { DISTANCE_GOAL } from "@/lib/task";
+import { DISTANCE_GOAL, JOB_SEARCH_GOAL } from "@/lib/task";
 import { istDayKey } from "@/lib/week";
 
 type Session = {
@@ -22,7 +22,10 @@ const SIGNED_OUT = "You are signed out. Refresh the page and sign in again.";
 
 const editSchema = z.object({
   id: z.uuid(),
-  minutes: z.number().int().min(1).max(600),
+  /** Null for a counted log (job search), which has no minutes at all. */
+  minutes: z.number().int().min(1).max(600).nullable().default(null),
+  /** The count behind a counted log; ignored for timed goals. */
+  quantity: z.number().int().min(1).max(1000).nullable().optional(),
   felt: z.enum(["easy", "ok", "hard"]).nullable().default(null),
   note: z.string().trim().max(280).nullable().default(null),
   /** Only meaningful for walk/run; omitted means "leave the stored value". */
@@ -75,7 +78,7 @@ export async function updateCompletionAction(input: unknown): Promise<Completion
   const session = await requireSession();
   if (!session) return { ok: false, message: SIGNED_OUT };
 
-  const { id, minutes, felt, note, distanceKm } = parsed.data;
+  const { id, minutes, felt, note, distanceKm, quantity } = parsed.data;
 
   const { data: row, error: readError } = await session.supabase
     .from("completions")
@@ -109,13 +112,27 @@ export async function updateCompletionAction(input: unknown): Promise<Completion
       ? (distanceKm ?? storedDistance ?? 0)
       : storedDistance;
 
+  // A job-search row is a count, not a stopwatch: it keeps no minutes or felt,
+  // and the count is what the day panel edits. Timed logs still need minutes.
+  const countOnly = row.goal === JOB_SEARCH_GOAL;
+
+  if (countOnly && !quantity) {
+    return { ok: false, message: "Enter how many you did." };
+  }
+
+  if (!countOnly && minutes === null) {
+    return { ok: false, message: "Enter the minutes for this log." };
+  }
+
   const { error } = await session.supabase
     .from("completions")
     .update({
-      minutes,
-      felt,
+      minutes: countOnly ? null : minutes,
+      felt: countOnly ? null : felt,
       note: note ? note : null,
       distance_km: distance,
+      // An old row may have no quantity; an edit of one supplies it.
+      ...(quantity ? { quantity } : {}),
     })
     .eq("id", id)
     .eq("user_id", session.userId);

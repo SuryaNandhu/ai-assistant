@@ -15,6 +15,7 @@ import {
   DEFAULT_DISTANCE_KM,
   DEFAULT_MINUTES,
   DISTANCE_GOAL,
+  JOB_SEARCH_GOAL,
   findGenericTask,
   goalLabel,
   noFitMessage,
@@ -64,11 +65,13 @@ export type TaskRef = {
   source: TaskSource;
   itemId: string | null;
   goal: string | null;
-  /** Whole minutes; null means "use the estimate". */
+  /** Whole minutes; null means "use the estimate". Ignored when count-only. */
   elapsedMinutes: number | null;
   distanceKm: number | null;
   /** How many things this sitting covered (3 applications); null means one. */
   quantity?: number | null;
+  /** One-line note, used by count-only logs (job search). */
+  note?: string | null;
   /** One-line takeaway for a link; ignored for generic suggestions. */
   takeaway: string | null;
   suggestionId: string | null;
@@ -76,8 +79,8 @@ export type TaskRef = {
 
 export type CompleteTaskInput = {
   task: TaskRef;
-  /** `completions.felt` vocabulary — "right" is stored as "ok". */
-  felt: Felt;
+  /** `completions.felt` vocabulary — "right" is stored as "ok". Null for a counted log. */
+  felt: Felt | null;
   /** "More like this?" — null means the user did not answer. */
   liked: boolean | null;
 };
@@ -204,11 +207,55 @@ function quantityFor(value: number | null | undefined): number | null {
   return Math.min(1000, rounded);
 }
 
+/**
+ * The user's own label for a goal ("DSA practice"), so a custom goal is never
+ * reported as a prettified key. A missing label is cosmetic, never an error.
+ */
+async function targetLabel(
+  session: DbSession,
+  goal: string | null,
+): Promise<string | null> {
+  if (!goal) return null;
+
+  const { data, error } = await session.supabase
+    .from("targets")
+    .select("label")
+    .eq("user_id", session.userId)
+    .eq("goal", goal)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Could not read the goal label:", error.message);
+    return null;
+  }
+
+  return typeof data?.label === "string" && data.label.trim()
+    ? data.label.trim()
+    : null;
+}
+
+/** A trimmed one-line note, or null — never an empty string in the column. */
+function taskNote(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 280) : null;
+}
+
+/**
+ * A counted log (job search) has no minutes, so the toast leads with the count:
+ * "Logged 3 · Job search". Everything else keeps "Logged 30 min · …".
+ */
 function loggedMessage(
-  minutes: number,
+  minutes: number | null,
   label: string,
   quantity?: number | null,
 ): string {
+  if (minutes === null) {
+    const count =
+      typeof quantity === "number" && quantity > 0 ? quantity : 1;
+    return `Logged ${count} · ${label}`;
+  }
+
   const count =
     typeof quantity === "number" && quantity > 1 ? ` · ${quantity} done` : "";
   return `Logged ${minutes} min · ${label}${count}`;
@@ -242,15 +289,22 @@ export async function completePickedTask(
     }
 
     const minutes = task.elapsedMinutes ?? template?.minutes ?? DEFAULT_MINUTES;
+    const countOnly = goal === JOB_SEARCH_GOAL;
+    const quantity = countOnly
+      ? (quantityFor(task.quantity) ?? 1)
+      : quantityFor(task.quantity);
+
     const { error } = await session.supabase.from("completions").insert({
       user_id: session.userId,
       item_id: null,
       goal,
       kind: goal,
-      minutes,
-      felt,
+      // A job-search row carries the count only: minutes and felt stay NULL.
+      minutes: countOnly ? null : minutes,
+      felt: countOnly ? null : felt,
+      note: taskNote(task.note),
       source: "suggestion",
-      quantity: quantityFor(task.quantity),
+      quantity,
       distance_km:
         goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
@@ -266,16 +320,20 @@ export async function completePickedTask(
     const today = istDayKey(new Date());
     await clearRestDayForCompletion(session, today);
 
-    await finishSuggestion(session, task.suggestionId, {
-      outcome: "done",
-      felt: toSuggestionFelt(felt),
-      liked,
-      actualMinutes: minutes,
-    });
+    // Nothing to learn from a counted log: no felt, no actual minutes.
+    const patch: SuggestionPatch = { outcome: "done" };
+    if (!countOnly) {
+      patch.felt = toSuggestionFelt(felt ?? "ok");
+      patch.liked = liked;
+      patch.actualMinutes = minutes;
+    }
+    await finishSuggestion(session, task.suggestionId, patch);
+
+    const label = (await targetLabel(session, goal)) ?? goalLabel(goal);
 
     return {
       ok: true,
-      message: loggedMessage(minutes, goalLabel(goal)),
+      message: loggedMessage(countOnly ? null : minutes, label, quantity),
     };
   }
 
@@ -305,6 +363,10 @@ export async function completePickedTask(
       ? item.est_minutes
       : DEFAULT_MINUTES;
   const minutes = task.elapsedMinutes ?? estimate;
+  const countOnly = goal === JOB_SEARCH_GOAL;
+  const quantity = countOnly
+    ? (quantityFor(task.quantity) ?? 1)
+    : quantityFor(task.quantity);
 
   const { error: insertError } = await session.supabase
     .from("completions")
@@ -313,10 +375,11 @@ export async function completePickedTask(
       item_id: item.id,
       goal,
       kind: typeof item.type === "string" && item.type ? item.type : "item",
-      minutes,
-      felt,
+      minutes: countOnly ? null : minutes,
+      felt: countOnly ? null : felt,
+      note: taskNote(task.note),
       source: "suggestion",
-      quantity: quantityFor(task.quantity),
+      quantity,
       distance_km: goal === DISTANCE_GOAL ? distanceFor(task.distanceKm) : null,
     });
 
@@ -331,12 +394,13 @@ export async function completePickedTask(
   const today = istDayKey(new Date());
   await clearRestDayForCompletion(session, today);
 
-  await finishSuggestion(session, task.suggestionId, {
-    outcome: "done",
-    felt: toSuggestionFelt(felt),
-    liked,
-    actualMinutes: minutes,
-  });
+  const patch: SuggestionPatch = { outcome: "done" };
+  if (!countOnly) {
+    patch.felt = toSuggestionFelt(felt ?? "ok");
+    patch.liked = liked;
+    patch.actualMinutes = minutes;
+  }
+  await finishSuggestion(session, task.suggestionId, patch);
 
   // The takeaway is optional; only write it when the user typed one so an
   // earlier note is never wiped by an empty field.
@@ -354,7 +418,14 @@ export async function completePickedTask(
     console.error("Could not mark the item done:", updateError.message);
   }
 
-  return { ok: true, message: loggedMessage(minutes, goalLabel(goal)) };
+  return {
+    ok: true,
+    message: loggedMessage(
+      countOnly ? null : minutes,
+      (await targetLabel(session, goal)) ?? goalLabel(goal),
+      quantity,
+    ),
+  };
 }
 
 export type SkipTaskInput = {

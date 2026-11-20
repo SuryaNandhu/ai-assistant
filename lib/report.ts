@@ -14,6 +14,8 @@ export type CompletionEntry = {
   goalLabel: string;
   minutes: number | null;
   distanceKm: number | null;
+  /** Counted logs (job search) store a count instead of minutes. */
+  quantity: number | null;
   felt: "easy" | "ok" | "hard" | null;
   /** `manual` = quick log or Saved screen, `suggestion` = picked on Home. */
   source: "suggestion" | "manual";
@@ -55,6 +57,7 @@ type CompletionRow = {
   goal: string | null;
   minutes: number | string | null;
   distance_km: number | string | null;
+  quantity: number | string | null;
   felt: string | null;
   source: string | null;
   note: string | null;
@@ -74,7 +77,7 @@ type ScreenTimeRow = {
 };
 
 const COMPLETION_COLUMNS =
-  "id, item_id, goal, minutes, distance_km, felt, source, note, completed_at, items(title)";
+  "id, item_id, goal, minutes, distance_km, quantity, felt, source, note, completed_at, items(title)";
 
 function toNumber(value: number | string | null | undefined): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -181,6 +184,7 @@ export async function loadMonthActivity(
       goalLabel: goalLabel(goal),
       minutes,
       distanceKm,
+      quantity: toNumber(row.quantity),
       felt: toFelt(row.felt),
       source: row.source === "manual" ? "manual" : "suggestion",
       note: row.note ?? null,

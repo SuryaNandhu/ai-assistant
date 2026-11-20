@@ -26,6 +26,8 @@ import { dayKeyLabel, shiftDayKey } from "@/lib/week";
 
 type EditDraft = {
   minutes: string;
+  /** Count behind a counted log (job search); empty for timed logs. */
+  quantity: string;
   distance: string;
   felt: Felt;
   note: string;
@@ -61,10 +63,16 @@ function CompletionItem({
   const [saving, startSaving] = useTransition();
   const [deleting, startDeleting] = useTransition();
 
+  // Job search logs a count, not a clock: no minutes and no felt on the row.
+  const counted = entry.minutes === null;
+
   const meta = [
-    entry.minutes !== null ? `${entry.minutes} min` : null,
+    counted ? `${entry.quantity ?? 1} done` : `${entry.minutes} min`,
+    !counted && entry.quantity !== null && entry.quantity > 1
+      ? `${entry.quantity} done`
+      : null,
     entry.distanceKm !== null ? formatKm(entry.distanceKm) : null,
-    feltLabel(entry.felt),
+    counted ? null : feltLabel(entry.felt),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -74,6 +82,7 @@ function CompletionItem({
     setConfirming(false);
     setDraft({
       minutes: entry.minutes === null ? "" : String(entry.minutes),
+      quantity: entry.quantity === null ? "1" : String(entry.quantity),
       distance: entry.distanceKm === null ? "" : String(entry.distanceKm),
       felt: entry.felt ?? "ok",
       note: entry.note ?? "",
@@ -83,8 +92,15 @@ function CompletionItem({
   function save() {
     if (!draft || saving) return;
 
+    // A counted log is edited by its count; a timed log still needs minutes.
+    const quantity = Number(draft.quantity || 1);
+    if (counted && (!Number.isFinite(quantity) || quantity < 1 || quantity > 1000)) {
+      setError("Count should be between 1 and 1000.");
+      return;
+    }
+
     const minutes = Number(draft.minutes);
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 600) {
+    if (!counted && (!Number.isFinite(minutes) || minutes < 1 || minutes > 600)) {
       setError("Minutes should be between 1 and 600.");
       return;
     }
@@ -104,8 +120,9 @@ function CompletionItem({
     startSaving(async () => {
       const result = await updateCompletionAction({
         id: entry.id,
-        minutes: Math.round(minutes),
-        felt: draft.felt,
+        minutes: counted ? null : Math.round(minutes),
+        quantity: counted ? Math.round(quantity) : undefined,
+        felt: counted ? null : draft.felt,
         note: draft.note.trim() ? draft.note.trim() : null,
         distanceKm: entry.goal === DISTANCE_GOAL ? distanceKm : undefined,
       });
@@ -183,22 +200,42 @@ function CompletionItem({
           className="mt-3"
         >
           <div className="grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="text-xs font-medium text-muted-foreground">
-                Minutes
-              </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={600}
-                value={draft.minutes}
-                onChange={(event) =>
-                  setDraft({ ...draft, minutes: event.target.value })
-                }
-                className={INPUT_CLASS}
-              />
-            </label>
+            {counted ? (
+              <label className="block">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Count
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={draft.quantity}
+                  onChange={(event) =>
+                    setDraft({ ...draft, quantity: event.target.value })
+                  }
+                  className={INPUT_CLASS}
+                />
+              </label>
+            ) : (
+              <label className="block">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Minutes
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={600}
+                  value={draft.minutes}
+                  onChange={(event) =>
+                    setDraft({ ...draft, minutes: event.target.value })
+                  }
+                  className={INPUT_CLASS}
+                />
+              </label>
+            )}
 
             {entry.goal === DISTANCE_GOAL && (
               <label className="block">
@@ -221,24 +258,26 @@ function CompletionItem({
             )}
           </div>
 
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {FELT_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={draft.felt === option.value}
-                onClick={() => setDraft({ ...draft, felt: option.value })}
-                className={[
-                  "h-11 rounded-xl border text-xs font-medium transition-colors",
-                  draft.felt === option.value
-                    ? "border-transparent bg-accent text-accent-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                ].join(" ")}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          {!counted && (
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {FELT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={draft.felt === option.value}
+                  onClick={() => setDraft({ ...draft, felt: option.value })}
+                  className={[
+                    "h-11 rounded-xl border text-xs font-medium transition-colors",
+                    draft.felt === option.value
+                      ? "border-transparent bg-accent text-accent-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <input
             type="text"

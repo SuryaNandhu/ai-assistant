@@ -3,13 +3,17 @@ import { isLocked, LOCKED_MESSAGE } from "@/lib/lock";
 import { QUICK_LOG_DEFAULT_DISTANCE_KM } from "@/lib/quick-log";
 import { clearRestDayForCompletion } from "@/lib/services/rest-day";
 import type { DbSession } from "@/lib/services/session";
-import { DISTANCE_GOAL } from "@/lib/task";
+import { DISTANCE_GOAL, JOB_SEARCH_GOAL } from "@/lib/task";
 import { isDayKey, istDayKey, shiftDayKey } from "@/lib/week";
 
 export type LogActivityInput = {
   /** Goal key from the active targets, or null for "Other". */
   goal: string | null;
-  minutes: number;
+  /**
+   * Time spent; ignored (and not stored) for count-only goals. Null is allowed
+   * so a chat tool call that only knows the count still validates.
+   */
+  minutes: number | null;
   distanceKm?: number | null;
   /** Applications sent / problems solved; null or 1 means a single thing. */
   quantity?: number | null;
@@ -53,15 +57,23 @@ export async function logActivity(
   input: LogActivityInput,
   now: Date = new Date(),
 ): Promise<LogActivityResult> {
-  const minutes = Math.round(input.minutes);
-  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 600) {
-    return {
-      ok: false,
-      message: "Minutes should be a whole number between 1 and 600.",
-    };
+  const goal = input.goal?.trim() ? input.goal.trim() : null;
+  // Job search is counted, not timed: no minutes, no felt, just how many
+  // applications / follow-ups / referral asks happened.
+  const countOnly = goal === JOB_SEARCH_GOAL;
+
+  let minutes: number | null = null;
+  if (!countOnly) {
+    const parsed = Math.round(input.minutes ?? 0);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 600) {
+      return {
+        ok: false,
+        message: "Minutes should be a whole number between 1 and 600.",
+      };
+    }
+    minutes = parsed;
   }
 
-  const goal = input.goal?.trim() ? input.goal.trim() : null;
   const distanceKm =
     typeof input.distanceKm === "number" && Number.isFinite(input.distanceKm)
       ? Math.min(100, Math.max(0, input.distanceKm))
@@ -71,9 +83,19 @@ export async function logActivity(
       ? Math.min(1000, Math.round(input.quantity))
       : null;
   const loggedQuantity = quantity !== null && quantity > 0 ? quantity : null;
+
+  if (countOnly && loggedQuantity === null) {
+    return {
+      ok: false,
+      message:
+        "Job search is counted, not timed: say how many applications, follow-ups or referral asks happened.",
+    };
+  }
+
   const note = input.note?.trim() ? input.note.trim().slice(0, 280) : null;
   const felt =
-    input.felt === "easy" || input.felt === "ok" || input.felt === "hard"
+    !countOnly &&
+    (input.felt === "easy" || input.felt === "ok" || input.felt === "hard")
       ? input.felt
       : null;
 
@@ -160,14 +182,17 @@ export async function logActivity(
   // A completion on a rest day means the day was not a rest day after all.
   await clearRestDayForCompletion(session, day, now);
 
-  const counts =
+  const distanceEnough =
     !isWalk || minDistanceKm === null || (distance ?? 0) >= minDistanceKm;
-
-  const amount = loggedQuantity !== null ? `${loggedQuantity} × ` : "";
 
   // A daily minimum is the real rule: say where today stands after this log.
   const todayTotal =
-    minQuantity !== null && counts ? await quantityOnDay(session, day, goal) : null;
+    minQuantity !== null ? await quantityOnDay(session, day, goal) : null;
+
+  // A counted day only counts once the day's total reaches the minimum.
+  const counts = countOnly
+    ? distanceEnough && (minQuantity === null || (todayTotal ?? 0) >= minQuantity)
+    : distanceEnough;
 
   const progressNote =
     minQuantity === null || todayTotal === null
@@ -175,6 +200,17 @@ export async function logActivity(
       : todayTotal >= minQuantity
         ? ` · day done (${todayTotal}/${minQuantity})`
         : ` · ${todayTotal}/${minQuantity} today`;
+
+  if (countOnly) {
+    return {
+      ok: true,
+      id: String(inserted.id),
+      counts,
+      message: `Logged ${loggedQuantity} · ${label}${progressNote}`,
+    };
+  }
+
+  const amount = loggedQuantity !== null ? `${loggedQuantity} × ` : "";
 
   return {
     ok: true,
